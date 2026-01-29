@@ -1,0 +1,189 @@
+{
+  "concert_event": {
+    "id": "G5vzZ4kH3eGJf",
+    "name": "Taylor Swift | The Eras Tour",
+    "type": "event",
+    "url": "https://www.ticketmaster.com/event/G5vzZ4kH3eGJf",
+    "dates": {
+      "start": {
+        "localDate": "2024-10-18",
+        "localTime": "19:00:00",
+        "dateTime": "2024-10-19T02:00:00Z"
+      },
+      "status": {
+        "code": "onsale"
+      }
+    },
+    "classifications": [
+      {
+        "segment": {
+          "id": "KZFzniwnSyZfZ7v7nJ",
+          "name": "Music"
+        },
+        "genre": {
+          "id": "KnvZfZ7vAeA",
+          "name": "Pop"
+        }
+      }
+    ],
+    "priceRanges": [
+      {
+        "type": "standard",
+        "currency": "USD",
+        "min": 49.0,
+        "max": 449.0
+      }
+    ],
+    "_embedded": {
+      "venues": [
+        {
+          "id": "KovZpZAEdntA",
+          "name": "SoFi Stadium",
+          "city": {
+            "name": "Inglewood"
+          },
+          "state": {
+            "name": "California",
+            "stateCode": "CA"
+          },
+          "country": {
+            "name": "United States Of America",
+            "countryCode": "US"
+          }
+        }
+      ],
+      "attractions": [
+        {
+          "id": "K8vZ9171oZf",
+          "name": "Taylor Swift"
+        }
+      ]
+    }
+  },
+  "sports_event": {
+    "id": "G5diZfkn0B-bP",
+    "name": "Los Angeles Lakers vs. Boston Celtics",
+    "type": "event",
+    "url": "https://www.ticketmaster.com/event/G5diZfkn0B-bP",
+    "dates": {
+      "start": {
+        "localDate": "2024-12-15",
+        "localTime": "19:30:00",
+        "dateTime": "2024-12-16T03:30:00Z"
+      },
+      "status": {
+        "code": "onsale"
+      }
+    },
+    "classifications": [
+      {
+        "segment": {
+          "id": "KZFzniwnSyZfZ7v7nE",
+          "name": "Sports"
+        },
+        "genre": {
+          "id": "KnvZfZ7vAde",
+          "name": "Basketball"
+        }
+      }
+    ],
+    "priceRanges": [
+      {
+        "type": "standard",
+        "currency": "USD",
+        "min": 75.0,
+        "max": 850.0
+      }
+    ],
+    "_embedded": {
+      "venues": [
+        {
+          "id": "KovZpZAFnIEA",
+          "name": "Crypto.com Arena",
+          "city": {
+            "name": "Los Angeles"
+          },
+          "state": {
+            "name": "California",
+            "stateCode": "CA"
+          },
+          "country": {
+            "name": "United States Of America",
+            "countryCode": "US"
+          }
+        }
+      ],
+      "attractions": [
+        {
+          "id": "K8vZ9171o-f",
+          "name": "Los Angeles Lakers"
+        },
+        {
+          "id": "K8vZ9171oV0",
+          "name": "Boston Celtics"
+        }
+      ]
+    }
+  },
+  "theater_event": {
+    "id": "G5eYZ4kQ2Rp1d",
+    "name": "Hamilton",
+    "type": "event",
+    "url": "https://www.ticketmaster.com/event/G5eYZ4kQ2Rp1d",
+    "dates": {
+      "start": {
+        "localDate": "2024-11-20",
+        "localTime": "20:00:00",
+        "dateTime": "2024-11-21T01:00:00Z"
+      },
+      "status": {
+        "code": "onsale"
+      }
+    },
+    "classifications": [
+      {
+        "segment": {
+          "id": "KZFzniwnSyZfZ7v7na",
+          "name": "Arts & Theatre"
+        },
+        "genre": {
+          "id": "KnvZfZ7v7l1",
+          "name": "Theatre"
+        }
+      }
+    ],
+    "priceRanges": [
+      {
+        "type": "standard",
+        "currency": "USD",
+        "min": 99.0,
+        "max": 699.0
+      }
+    ],
+    "_embedded": {
+      "venues": [
+        {
+          "id": "KovZpZA7AAEA",
+          "name": "Richard Rodgers Theatre",
+          "city": {
+            "name": "New York"
+          },
+          "state": {
+            "name": "New York",
+            "stateCode": "NY"
+          },
+          "country": {
+            "name": "United States Of America",
+            "countryCode": "US"
+          }
+        }
+      ],
+      "attractions": [
+        {
+          "id": "K8vZ917Gku7",
+          "name": "Hamilton"
+        }
+      ]
+    }
+  }
+}
