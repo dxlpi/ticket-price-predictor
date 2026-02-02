@@ -106,8 +106,20 @@ def append_parquet(
     # Read existing data if present
     existing = read_parquet(path)
 
-    # Concatenate with existing data if present
-    combined = pa.concat_tables([existing, new_table]) if existing is not None else new_table
+    if existing is not None:
+        # Select only the columns that match the schema to handle partition columns
+        existing_cols = set(existing.schema.names)
+        new_cols = set(new_table.schema.names)
+        common_cols = list(existing_cols & new_cols)
+
+        # If schemas differ, use only common columns
+        if existing.schema != new_table.schema:
+            existing = existing.select(common_cols)
+            new_table = new_table.select(common_cols)
+
+        combined = pa.concat_tables([existing, new_table], promote_options="default")
+    else:
+        combined = new_table
 
     # Ensure parent directory exists
     path.parent.mkdir(parents=True, exist_ok=True)

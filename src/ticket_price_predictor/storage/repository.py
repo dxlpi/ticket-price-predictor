@@ -5,7 +5,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from ticket_price_predictor.schemas import EventMetadata, EventType, PriceSnapshot, SeatZone
+from ticket_price_predictor.schemas import (
+    EventMetadata,
+    EventType,
+    PriceSnapshot,
+    SeatZone,
+    TicketListing,
+)
 from ticket_price_predictor.storage.parquet import append_parquet, read_parquet, table_to_dicts
 
 
@@ -270,5 +276,204 @@ class SnapshotRepository:
             price_avg=data.get("price_avg"),
             price_max=data.get("price_max"),
             inventory_remaining=data.get("inventory_remaining"),
+            days_to_event=data["days_to_event"],
+        )
+
+
+class ListingRepository:
+    """Repository for seat-level ticket listings."""
+
+    def __init__(self, data_dir: Path) -> None:
+        """Initialize the repository.
+
+        Args:
+            data_dir: Base directory for data storage
+        """
+        self._data_dir = data_dir
+        self._listings_dir = data_dir / "raw" / "listings"
+
+    def save_listings(self, listings: list[TicketListing]) -> int:
+        """Save listings to storage, partitioned by date.
+
+        Args:
+            listings: List of listings to save
+
+        Returns:
+            Number of listings saved
+        """
+        if not listings:
+            return 0
+
+        # Group listings by date (year/month/day)
+        by_partition: dict[tuple[int, int, int], list[TicketListing]] = {}
+        for listing in listings:
+            key = (
+                listing.timestamp.year,
+                listing.timestamp.month,
+                listing.timestamp.day,
+            )
+            if key not in by_partition:
+                by_partition[key] = []
+            by_partition[key].append(listing)
+
+        total_saved = 0
+        for (year, month, day), partition_listings in by_partition.items():
+            path = (
+                self._listings_dir
+                / f"year={year}"
+                / f"month={month:02d}"
+                / f"day={day:02d}"
+                / "listings.parquet"
+            )
+            append_parquet(partition_listings, path, TicketListing.parquet_schema())
+            total_saved += len(partition_listings)
+
+        return total_saved
+
+    def get_listings(
+        self,
+        event_id: str | None = None,
+        section: str | None = None,
+        min_price: float | None = None,
+        max_price: float | None = None,
+    ) -> list[TicketListing]:
+        """Get listings matching criteria.
+
+        Args:
+            event_id: Optional event ID filter
+            section: Optional section filter
+            min_price: Optional minimum price filter
+            max_price: Optional maximum price filter
+
+        Returns:
+            List of matching listings
+        """
+        if not self._listings_dir.exists():
+            return []
+
+        all_listings: list[TicketListing] = []
+
+        # Read all partition files
+        for parquet_file in self._listings_dir.rglob("*.parquet"):
+            pq_filters: list[tuple[str, str, Any]] = []
+            if event_id:
+                pq_filters.append(("event_id", "=", event_id))
+
+            table = read_parquet(parquet_file, filters=pq_filters if pq_filters else None)
+
+            if table is None:
+                continue
+
+            records = table_to_dicts(table)
+            for record in records:
+                listing = self._dict_to_listing(record)
+
+                # Apply additional filters
+                if section and listing.section != section:
+                    continue
+                if min_price and listing.listing_price < min_price:
+                    continue
+                if max_price and listing.listing_price > max_price:
+                    continue
+
+                all_listings.append(listing)
+
+        # Sort by timestamp (newest first)
+        all_listings.sort(key=lambda x: x.timestamp, reverse=True)
+
+        return all_listings
+
+    def get_price_history(
+        self,
+        event_id: str,
+        section: str | None = None,
+        row: str | None = None,
+    ) -> list[TicketListing]:
+        """Get price history for an event, optionally filtered by section/row.
+
+        Args:
+            event_id: Event ID to look up
+            section: Optional section filter
+            row: Optional row filter
+
+        Returns:
+            List of listings sorted by timestamp (oldest first)
+        """
+        listings = self.get_listings(event_id=event_id, section=section)
+
+        if row:
+            listings = [lst for lst in listings if lst.row == row]
+
+        # Sort by timestamp (oldest first for history)
+        listings.sort(key=lambda x: x.timestamp)
+
+        return listings
+
+    def get_latest_listings(
+        self,
+        event_id: str,
+        limit: int = 100,
+    ) -> list[TicketListing]:
+        """Get the most recent listings for an event.
+
+        Args:
+            event_id: Event ID to look up
+            limit: Maximum number of listings to return
+
+        Returns:
+            List of latest listings
+        """
+        listings = self.get_listings(event_id=event_id)
+        return listings[:limit]
+
+    def list_event_ids(self) -> list[str]:
+        """Get all unique event IDs in the listings.
+
+        Returns:
+            List of unique event IDs
+        """
+        if not self._listings_dir.exists():
+            return []
+
+        event_ids: set[str] = set()
+
+        for parquet_file in self._listings_dir.rglob("*.parquet"):
+            table = read_parquet(parquet_file)
+            if table is not None:
+                ids = cast(list[str], table.column("event_id").to_pylist())
+                event_ids.update(ids)
+
+        return list(event_ids)
+
+    def _dict_to_listing(self, data: dict[str, Any]) -> TicketListing:
+        """Convert a dictionary to TicketListing."""
+        # Handle timezone-naive datetimes from Parquet
+        timestamp = data["timestamp"]
+        if isinstance(timestamp, datetime) and timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+
+        event_datetime = data["event_datetime"]
+        if isinstance(event_datetime, datetime) and event_datetime.tzinfo is None:
+            event_datetime = event_datetime.replace(tzinfo=UTC)
+
+        return TicketListing(
+            listing_id=data["listing_id"],
+            event_id=data["event_id"],
+            source=data.get("source", "stubhub"),
+            timestamp=timestamp,
+            event_name=data["event_name"],
+            artist_or_team=data["artist_or_team"],
+            venue_name=data["venue_name"],
+            city=data["city"],
+            event_datetime=event_datetime,
+            section=data["section"],
+            row=data["row"],
+            seat_from=data.get("seat_from"),
+            seat_to=data.get("seat_to"),
+            quantity=data["quantity"],
+            face_value=data.get("face_value"),
+            listing_price=data["listing_price"],
+            total_price=data["total_price"],
+            currency=data.get("currency", "USD"),
             days_to_event=data["days_to_event"],
         )
