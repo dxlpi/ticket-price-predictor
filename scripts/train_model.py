@@ -2,13 +2,16 @@
 """Train a ticket price prediction model.
 
 Usage:
-    python scripts/train_model.py --model lightgbm
+    python scripts/train_model.py  # trains LightGBM model (default)
+    python scripts/train_model.py --model quantile --version v3
     python scripts/train_model.py --model baseline --output data/models/
-    python scripts/train_model.py --model quantile --version v2
+    python scripts/train_model.py --from-study lightgbm_aggressive --version v4
 """
 
 import argparse
 from pathlib import Path
+
+import optuna
 
 from ticket_price_predictor.ml.training.data_loader import DataLoader
 from ticket_price_predictor.ml.training.trainer import ModelTrainer
@@ -43,8 +46,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--version",
         type=str,
-        default="v1",
-        help="Model version (default: v1)",
+        default="v3",
+        help="Model version (default: v3)",
     )
 
     parser.add_argument(
@@ -59,6 +62,26 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.15,
         help="Validation data ratio (default: 0.15)",
+    )
+
+    parser.add_argument(
+        "--from-study",
+        type=str,
+        default=None,
+        help="Load best hyperparameters from Optuna study",
+    )
+
+    parser.add_argument(
+        "--trial-id",
+        type=int,
+        default=None,
+        help="Use specific trial ID from study (requires --from-study)",
+    )
+
+    parser.add_argument(
+        "--preprocess",
+        action="store_true",
+        help="Enable preprocessing pipeline before training",
     )
 
     return parser.parse_args()
@@ -76,6 +99,30 @@ def main() -> None:
     print(f"Data directory: {args.data_dir}")
     print(f"Output directory: {args.output}")
     print(f"Version: {args.version}")
+    print(f"Preprocessing: {'enabled' if args.preprocess else 'disabled'}")
+
+    # Load hyperparameters from Optuna study if specified
+    params = None
+    if args.from_study:
+        print(f"\nLoading hyperparameters from study: {args.from_study}")
+        storage = f"sqlite:///data/optuna/studies/{args.from_study}.db"
+        study = optuna.load_study(study_name=args.from_study, storage=storage)
+
+        if args.trial_id is not None:
+            # Use specific trial
+            trial = [t for t in study.trials if t.number == args.trial_id][0]
+            print(f"  Using trial #{args.trial_id}")
+            print(f"  Trial MAE: ${trial.value:.2f}")
+        else:
+            # Use best trial
+            trial = study.best_trial
+            print(f"  Using best trial #{trial.number}")
+            print(f"  Best MAE: ${trial.value:.2f}")
+
+        params = trial.params
+        print(f"  Loaded {len(params)} hyperparameters")
+        print()
+
     print()
 
     # Load data
@@ -101,12 +148,35 @@ def main() -> None:
     )
 
     test_ratio = 1.0 - args.train_ratio - args.val_ratio
-    metrics = trainer.train(
-        df,
-        train_ratio=args.train_ratio,
-        val_ratio=args.val_ratio,
-        test_ratio=test_ratio,
-    )
+
+    # Use train_with_params if we have custom params, otherwise use regular train
+    if params:
+        # Need to create split and use train_with_params
+        from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
+        from ticket_price_predictor.ml.training.splitter import TimeBasedSplitter
+
+        print("Extracting features...")
+        pipeline = FeaturePipeline(include_momentum=True)
+        X = pipeline.fit_transform(df)
+        y = df["listing_price"]
+
+        print("Splitting data...")
+        splitter = TimeBasedSplitter(
+            train_ratio=args.train_ratio,
+            val_ratio=args.val_ratio,
+            test_ratio=test_ratio,
+        )
+        split = splitter.split(X, y, raw_df=df)
+
+        metrics = trainer.train_with_params(split, params)
+    else:
+        metrics = trainer.train(
+            df,
+            train_ratio=args.train_ratio,
+            val_ratio=args.val_ratio,
+            test_ratio=test_ratio,
+            preprocess=args.preprocess,
+        )
 
     # Save model
     print()

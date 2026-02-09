@@ -1,5 +1,7 @@
 """High-level data access repositories for events and snapshots."""
 
+import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +15,8 @@ from ticket_price_predictor.schemas import (
     TicketListing,
 )
 from ticket_price_predictor.storage.parquet import append_parquet, read_parquet, table_to_dicts
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -291,16 +295,104 @@ class ListingRepository:
         """
         self._data_dir = data_dir
         self._listings_dir = data_dir / "raw" / "listings"
+        self._dedup_hashes_file = data_dir / "raw" / "listings" / ".listing_hashes.txt"
+        self._cached_hashes: set[str] | None = None
 
-    def save_listings(self, listings: list[TicketListing]) -> int:
+    @staticmethod
+    def compute_listing_hash(listing: TicketListing) -> str:
+        """Compute a hash for a listing based on its composite key.
+
+        Composite key: (event_id, section, row, seat_from, seat_to, source)
+
+        This identifies the "same" listing even if scraped multiple times.
+
+        Args:
+            listing: The listing to hash
+
+        Returns:
+            MD5 hash string of the composite key
+        """
+        key_parts = [
+            listing.event_id,
+            listing.section.lower().strip(),
+            (listing.row or "").lower().strip(),
+            str(listing.seat_from or ""),
+            str(listing.seat_to or ""),
+            listing.source.lower().strip(),
+        ]
+        key_str = "|".join(key_parts)
+        return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _load_existing_hashes(self) -> set[str]:
+        """Load existing listing hashes from disk.
+
+        Returns:
+            Set of known listing hashes
+        """
+        if self._cached_hashes is not None:
+            return self._cached_hashes
+
+        hashes: set[str] = set()
+
+        if self._dedup_hashes_file.exists():
+            with open(self._dedup_hashes_file) as f:
+                hashes = {line.strip() for line in f if line.strip()}
+
+        self._cached_hashes = hashes
+        return hashes
+
+    def _save_hashes(self, new_hashes: set[str]) -> None:
+        """Append new hashes to the dedup file.
+
+        Args:
+            new_hashes: New hashes to save
+        """
+        self._dedup_hashes_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(self._dedup_hashes_file, "a") as f:
+            for h in new_hashes:
+                f.write(h + "\n")
+
+        # Update cache
+        if self._cached_hashes is not None:
+            self._cached_hashes.update(new_hashes)
+
+    def save_listings(self, listings: list[TicketListing], deduplicate: bool = True) -> int:
         """Save listings to storage, partitioned by date.
 
         Args:
             listings: List of listings to save
+            deduplicate: If True, filter out listings already stored
 
         Returns:
-            Number of listings saved
+            Number of new listings saved
         """
+        if not listings:
+            return 0
+
+        # Deduplicate if requested
+        if deduplicate:
+            existing_hashes = self._load_existing_hashes()
+            new_listings = []
+            new_hashes = set()
+
+            for listing in listings:
+                listing_hash = self.compute_listing_hash(listing)
+
+                if listing_hash not in existing_hashes and listing_hash not in new_hashes:
+                    new_listings.append(listing)
+                    new_hashes.add(listing_hash)
+
+            if len(new_listings) < len(listings):
+                duplicates = len(listings) - len(new_listings)
+                logger.debug(f"Filtered {duplicates} duplicate listings")
+
+            listings = new_listings
+
+            # Save new hashes
+            if new_hashes:
+                self._save_hashes(new_hashes)
+
         if not listings:
             return 0
 
@@ -329,6 +421,12 @@ class ListingRepository:
             total_saved += len(partition_listings)
 
         return total_saved
+
+    def clear_dedup_cache(self) -> None:
+        """Clear the deduplication hash cache (useful for testing)."""
+        if self._dedup_hashes_file.exists():
+            self._dedup_hashes_file.unlink()
+        self._cached_hashes = None
 
     def get_listings(
         self,

@@ -24,9 +24,13 @@ class LightGBMModel(PriceModel):
         "boosting_type": "gbdt",
         "num_leaves": 31,
         "learning_rate": 0.05,
-        "feature_fraction": 0.8,
-        "bagging_fraction": 0.8,
+        # Regularization to reduce feature dominance
+        "feature_fraction": 0.7,  # Sample 70% of features per tree
+        "bagging_fraction": 0.7,  # Sample 70% of data per tree
         "bagging_freq": 5,
+        "min_child_samples": 20,  # Minimum samples per leaf
+        "reg_alpha": 0.1,  # L1 regularization
+        "reg_lambda": 0.1,  # L2 regularization
         "verbose": -1,
         "n_estimators": 500,
         "early_stopping_rounds": 50,
@@ -107,9 +111,11 @@ class LightGBMModel(PriceModel):
             valid_sets.append(val_data)
             valid_names.append("valid")
 
-        # Extract training params
-        n_estimators = self._params.pop("n_estimators", 500)
-        early_stopping_rounds = self._params.pop("early_stopping_rounds", 50)
+        # Extract training params (use copy to avoid mutating self._params)
+        train_params = {k: v for k, v in self._params.items()
+                        if k not in ("n_estimators", "early_stopping_rounds")}
+        n_estimators = self._params.get("n_estimators", 500)
+        early_stopping_rounds = self._params.get("early_stopping_rounds", 50)
 
         # Train
         callbacks = []
@@ -118,17 +124,13 @@ class LightGBMModel(PriceModel):
         callbacks.append(lgb.log_evaluation(period=100))
 
         self._model = lgb.train(
-            self._params,
+            train_params,
             train_data,
             num_boost_round=n_estimators,
             valid_sets=valid_sets,
             valid_names=valid_names,
             callbacks=callbacks,
         )
-
-        # Restore params
-        self._params["n_estimators"] = n_estimators
-        self._params["early_stopping_rounds"] = early_stopping_rounds
 
         self._best_iteration = self._model.best_iteration
         self._fitted = True

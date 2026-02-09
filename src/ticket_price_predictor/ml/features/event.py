@@ -2,7 +2,10 @@
 
 import pandas as pd
 
+from ticket_price_predictor.config import get_ml_config
 from ticket_price_predictor.ml.features.base import FeatureExtractor
+
+_config = get_ml_config()
 
 
 class EventFeatureExtractor(FeatureExtractor):
@@ -99,14 +102,14 @@ class EventFeatureExtractor(FeatureExtractor):
             return 3
 
     def _capacity_bucket(self, capacity: float | None) -> int:
-        """Bucket venue capacity into categories."""
+        """Bucket venue capacity into categories (thresholds from config)."""
         if pd.isna(capacity):
             return 2  # Unknown -> medium
-        elif capacity < 5000:
+        elif capacity < _config.venue_small_capacity:
             return 0  # Small/intimate
-        elif capacity < 15000:
+        elif capacity < _config.venue_medium_capacity:
             return 1  # Medium arena
-        elif capacity < 40000:
+        elif capacity < _config.venue_large_capacity:
             return 2  # Large arena
         else:
             return 3  # Stadium

@@ -22,29 +22,45 @@ class BaselineModel(PriceModel):
     for categorical features.
     """
 
-    # Default categorical and numeric features
+    # Default categorical and numeric features (matched to FeaturePipeline output)
     CATEGORICAL_FEATURES = [
         "seat_zone_encoded",
         "event_type_encoded",
         "city_tier",
         "day_of_week",
         "urgency_bucket",
-        "popularity_tier",
         "venue_capacity_bucket",
     ]
 
     NUMERIC_FEATURES = [
+        # Time-series features
         "days_to_event",
         "days_to_event_squared",
+        "days_to_event_sqrt",
+        "is_last_week",
+        "is_last_day",
+        # Seating features
         "zone_price_ratio",
         "row_numeric",
-        "is_weekend",
-        "is_kpop",
-        "is_major_artist",
-        "is_country",
         "is_floor",
         "is_ga",
-        "is_last_week",
+        # Event features
+        "is_weekend",
+        "is_summer",
+        "is_holiday_season",
+        # Performer features (data-driven)
+        "artist_avg_price",
+        "artist_median_price",
+        "artist_price_std",
+        "artist_event_count",
+        "artist_listing_count",
+        "artist_premium_ratio",
+        "is_known_artist",
+        # Momentum features (optional)
+        "price_momentum_7d",
+        "price_momentum_30d",
+        "price_vs_initial",
+        "price_volatility",
     ]
 
     def __init__(

@@ -51,6 +51,7 @@ class ListingCollector:
         delay_seconds: float = 2.0,
         use_browser: bool = False,
         source: DataSource = DataSource.VIVIDSEATS,
+        preprocess: bool = False,
     ) -> None:
         """Initialize the collector.
 
@@ -59,12 +60,23 @@ class ListingCollector:
             delay_seconds: Delay between scraper requests
             use_browser: Use Playwright browser automation (slower but bypasses anti-bot)
             source: Data source to use (vividseats recommended, stubhub blocked)
+            preprocess: Enable preprocessing pipeline before storage (default: False)
         """
         self._data_dir = data_dir
         self._delay = delay_seconds
         self._use_browser = use_browser
         self._source = source
+        self._preprocess = preprocess
         self._repository = ListingRepository(data_dir)
+
+        # Lazy-load preprocessing pipeline
+        self._pipeline = None
+        if self._preprocess:
+            from ticket_price_predictor.preprocessing import PipelineBuilder, PreprocessingConfig
+
+            config = PreprocessingConfig()
+            builder = PipelineBuilder(config)
+            self._pipeline = builder.build_preset("listings")
 
     def _get_scraper_class(self) -> type[Any]:
         """Get the appropriate scraper class based on configuration."""
@@ -120,8 +132,10 @@ class ListingCollector:
                     result.events_processed += 1
                     result.listings_collected += len(listings)
 
-                    # Save listings
+                    # Save listings (with optional preprocessing)
                     if listings:
+                        if self._preprocess and self._pipeline:
+                            listings = self._preprocess_listings(listings)
                         saved = self._repository.save_listings(listings)
                         result.listings_saved += saved
 
@@ -183,6 +197,8 @@ class ListingCollector:
                 result.listings_collected = len(listings)
 
                 if listings:
+                    if self._preprocess and self._pipeline:
+                        listings = self._preprocess_listings(listings)
                     saved = self._repository.save_listings(listings)
                     result.listings_saved = saved
 
@@ -190,6 +206,34 @@ class ListingCollector:
                 result.errors.append(f"Failed to collect listings: {e}")
 
         return result
+
+    def _preprocess_listings(self, listings: list[TicketListing]) -> list[TicketListing]:
+        """Apply preprocessing pipeline to listings.
+
+        Args:
+            listings: Raw listings to preprocess
+
+        Returns:
+            Preprocessed listings
+        """
+        if not self._pipeline:
+            return listings
+
+        # Convert to DataFrame
+        import pandas as pd
+
+        df = pd.DataFrame([listing.model_dump() for listing in listings])
+
+        # Run preprocessing
+        result = self._pipeline.process(df)
+
+        # Convert back to TicketListing objects
+        preprocessed = []
+        for _, row in result.data.iterrows():
+            listing = TicketListing(**row.to_dict())
+            preprocessed.append(listing)
+
+        return preprocessed
 
     async def _collect_event_listings(
         self,

@@ -5,6 +5,7 @@ Collects real seat-level ticket listings with pricing data.
 
 import asyncio
 import json
+import logging
 import random
 import re
 from typing import Any
@@ -13,6 +14,8 @@ from playwright.async_api import Browser, BrowserContext, Page, Response, async_
 from playwright_stealth import Stealth
 
 from ticket_price_predictor.schemas import ScrapedEvent, ScrapedListing
+
+logger = logging.getLogger(__name__)
 
 
 class VividSeatsScraper:
@@ -208,31 +211,106 @@ class VividSeatsScraper:
 
         await self._delay_random()
 
+        logger.debug(f"Navigating to {event_url}")
+
         # Capture the listings API response
         listings_data: dict[str, Any] | None = None
+        via_api = False
 
         async def capture_listings(response: Response) -> None:
-            nonlocal listings_data
-            if "/hermes/api/v1/listings?" in response.url and "productionId" in response.url:
+            nonlocal listings_data, via_api
+            if "/hermes/api/v1/listings" in response.url and "productionId" in response.url:
                 try:
                     if "json" in response.headers.get("content-type", ""):
                         listings_data = await response.json()
+                        via_api = True
                 except Exception:
                     pass
 
         self._page.on("response", capture_listings)
 
-        # Navigate to event page
-        await self._page.goto(event_url, wait_until="load")
-        await asyncio.sleep(8)  # Wait for API calls
+        # Navigate to event page with extended timeout
+        try:
+            await self._page.goto(event_url, wait_until="domcontentloaded", timeout=60000)
+        except Exception as e:
+            logger.warning(f"Page navigation timeout for {event_url}: {e}")
+            self._page.remove_listener("response", capture_listings)
+            return []
+
+        # Check for redirects (VividSeats redirects expired events to random pages)
+        final_url = self._page.url
+        # Extract production ID from original URL
+        original_prod_id = event_url.split("/production/")[-1].split("/")[0] if "/production/" in event_url else None
+        if original_prod_id and f"/production/{original_prod_id}" not in final_url:
+            logger.warning(f"URL redirected from {event_url} to {final_url} - event may be expired")
+            self._page.remove_listener("response", capture_listings)
+            return []
+
+        # Wait for listings API specifically (this is the key wait)
+        try:
+            await self._page.wait_for_response(
+                lambda r: "/hermes/api/v1/listings" in r.url and "productionId" in r.url,
+                timeout=25000
+            )
+        except Exception:
+            # API call may have already happened or may not exist
+            logger.debug("Listings API wait timed out, checking captured data")
+
+        # Additional wait for any pending responses
+        await asyncio.sleep(5)
 
         # Remove listener
         self._page.remove_listener("response", capture_listings)
 
+        # Fallback: try __NEXT_DATA__ if API capture failed
         if not listings_data:
+            listings_data = await self._extract_from_next_data()
+            via_api = False
+
+        # Retry logic: scroll and try again if no listings captured
+        if not listings_data:
+            logger.debug("No listings captured, retrying with scroll")
+            # Scroll to trigger lazy load
+            await self._page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(3)
+
+            # Try __NEXT_DATA__ again after scroll
+            listings_data = await self._extract_from_next_data()
+
+        if not listings_data:
+            logger.warning(f"No listings data captured for {event_url}")
             return []
 
-        return self._extract_listings(listings_data, max_listings)
+        listings = self._extract_listings(listings_data, max_listings)
+        logger.info(f"Captured {len(listings)} listings via {'API' if via_api else '__NEXT_DATA__'}")
+        return listings
+
+    async def _extract_from_next_data(self) -> dict[str, Any] | None:
+        """Fallback: extract listings from __NEXT_DATA__ script tag."""
+        if not self._page:
+            return None
+
+        try:
+            html = await self._page.content()
+            match = re.search(r'<script id="__NEXT_DATA__"[^>]*>([^<]+)</script>', html)
+            if not match:
+                return None
+
+            data = json.loads(match.group(1))
+            page_props = data.get("props", {}).get("pageProps", {})
+
+            # Check if listings are embedded in page props
+            if "initialListingsData" in page_props:
+                return page_props["initialListingsData"]
+
+            # Alternative: check for tickets directly
+            if "tickets" in page_props:
+                return {"tickets": page_props["tickets"]}
+
+        except (json.JSONDecodeError, AttributeError, KeyError):
+            pass
+
+        return None
 
     def _extract_listings(
         self,

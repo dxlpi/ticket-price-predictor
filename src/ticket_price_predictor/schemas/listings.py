@@ -122,6 +122,7 @@ def create_listing_from_scraped(
     scraped: ScrapedListing,
     event: ScrapedEvent,
     timestamp: datetime | None = None,
+    source: str = "vividseats",
 ) -> TicketListing:
     """Create a TicketListing from scraped data.
 
@@ -129,6 +130,7 @@ def create_listing_from_scraped(
         scraped: Raw scraped listing data
         event: Event information
         timestamp: Collection timestamp (default: now)
+        source: Data source identifier (default: vividseats)
 
     Returns:
         TicketListing with all fields populated
@@ -146,7 +148,7 @@ def create_listing_from_scraped(
     return TicketListing(
         listing_id=scraped.listing_id,
         event_id=event.stubhub_event_id,
-        source="stubhub",
+        source=source,
         timestamp=timestamp,
         event_name=event.event_name,
         artist_or_team=event.artist_or_team,

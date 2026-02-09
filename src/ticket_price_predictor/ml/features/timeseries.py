@@ -14,7 +14,7 @@ class TimeSeriesFeatureExtractor(FeatureExtractor):
         return [
             "days_to_event",
             "days_to_event_squared",
-            "days_to_event_log",
+            "days_to_event_sqrt",
             "urgency_bucket",
             "is_last_week",
             "is_last_day",
@@ -32,7 +32,7 @@ class TimeSeriesFeatureExtractor(FeatureExtractor):
         # Core time features
         result["days_to_event"] = days
         result["days_to_event_squared"] = days ** 2
-        result["days_to_event_log"] = (days + 1).apply(lambda x: x ** 0.5)  # sqrt transform
+        result["days_to_event_sqrt"] = (days + 1).apply(lambda x: x ** 0.5)  # sqrt transform
 
         # Urgency buckets
         result["urgency_bucket"] = days.apply(self._urgency_bucket)
@@ -117,30 +117,29 @@ class MomentumFeatureExtractor(FeatureExtractor):
         # Sort by time within groups
         df = df.sort_values(group_cols + [time_col])
 
-        # Compute rolling stats within groups
-        for group_col in group_cols:
-            grouped = df.groupby(group_col)[price_col]
+        # Compute rolling stats within groups (using all group columns together)
+        grouped = df.groupby(group_cols)[price_col]
 
-            # Price changes
-            df["price_change"] = grouped.diff()
-            df["price_pct_change"] = grouped.pct_change()
+        # Price changes
+        df["price_change"] = grouped.diff()
+        df["price_pct_change"] = grouped.pct_change()
 
-            # Rolling momentum (7-day approximation using last N rows)
-            df["price_momentum_7d"] = grouped.transform(
-                lambda x: x.pct_change(periods=min(3, len(x) - 1)).fillna(0)
-            )
-            df["price_momentum_30d"] = grouped.transform(
-                lambda x: x.pct_change(periods=min(10, len(x) - 1)).fillna(0)
-            )
+        # Rolling momentum (7-day approximation using last N rows)
+        df["price_momentum_7d"] = grouped.transform(
+            lambda x: x.pct_change(periods=min(3, len(x) - 1)).fillna(0)
+        )
+        df["price_momentum_30d"] = grouped.transform(
+            lambda x: x.pct_change(periods=min(10, len(x) - 1)).fillna(0)
+        )
 
-            # Price vs initial
-            df["price_vs_initial"] = grouped.transform(
-                lambda x: x / x.iloc[0] if len(x) > 0 and x.iloc[0] > 0 else 1.0
-            )
+        # Price vs initial
+        df["price_vs_initial"] = grouped.transform(
+            lambda x: x / x.iloc[0] if len(x) > 0 and x.iloc[0] > 0 else 1.0
+        )
 
-            # Volatility (std of pct changes)
-            df["price_volatility"] = grouped.transform(
-                lambda x: x.pct_change().rolling(min(5, len(x)), min_periods=1).std().fillna(0)
-            )
+        # Volatility (std of pct changes)
+        df["price_volatility"] = grouped.transform(
+            lambda x: x.pct_change().rolling(min(5, len(x)), min_periods=1).std().fillna(0)
+        )
 
         return df

@@ -1,5 +1,6 @@
 """Model training utilities."""
 
+import json
 import time
 from pathlib import Path
 from typing import Literal
@@ -50,14 +51,18 @@ class ModelTrainer:
         """Return training metrics."""
         return self._metrics
 
-    def _create_model(self) -> PriceModel:
-        """Create model instance based on type."""
+    def _create_model(self, params: dict | None = None) -> PriceModel:
+        """Create model instance based on type.
+
+        Args:
+            params: Optional hyperparameters for the model
+        """
         if self._model_type == "baseline":
             return BaselineModel()
         elif self._model_type == "lightgbm":
-            return LightGBMModel()
+            return LightGBMModel(params=params) if params else LightGBMModel()
         elif self._model_type == "quantile":
-            return QuantileLightGBMModel()
+            return QuantileLightGBMModel(params=params) if params else QuantileLightGBMModel()
         else:
             raise ValueError(f"Unknown model type: {self._model_type}")
 
@@ -67,6 +72,7 @@ class ModelTrainer:
         train_ratio: float = 0.7,
         val_ratio: float = 0.15,
         test_ratio: float = 0.15,
+        preprocess: bool = False,
     ) -> TrainingMetrics:
         """Train model on data.
 
@@ -75,6 +81,7 @@ class ModelTrainer:
             train_ratio: Fraction for training
             val_ratio: Fraction for validation
             test_ratio: Fraction for testing
+            preprocess: Enable preprocessing pipeline before training (default: False)
 
         Returns:
             Training metrics
@@ -82,9 +89,14 @@ class ModelTrainer:
         print(f"Training {self._model_type} model...")
         print(f"Data shape: {df.shape}")
 
-        # Extract features
+        # Optional preprocessing
+        if preprocess:
+            print("Running preprocessing pipeline...")
+            df = self._preprocess_data(df)
+
+        # Extract features (momentum features enabled for better predictions)
         print("Extracting features...")
-        self._feature_pipeline = FeaturePipeline(include_momentum=False)
+        self._feature_pipeline = FeaturePipeline(include_momentum=True)
         X = self._feature_pipeline.fit_transform(df)
         y = df[self._target_col]
 
@@ -174,6 +186,49 @@ class ModelTrainer:
 
         return self._metrics
 
+    def train_with_params(
+        self,
+        split: DataSplit,
+        params: dict,
+    ) -> TrainingMetrics:
+        """Train model with custom hyperparameters.
+
+        Args:
+            split: DataSplit object
+            params: Hyperparameter dictionary
+
+        Returns:
+            Training metrics
+        """
+        print(f"Training {self._model_type} model with custom params...")
+        print(f"Train: {split.n_train}, Val: {split.n_val}, Test: {split.n_test}")
+
+        start_time = time.time()
+
+        self._model = self._create_model(params=params)
+        self._model.fit(
+            split.X_train,
+            split.y_train,
+            split.X_val,
+            split.y_val,
+        )
+
+        training_time = time.time() - start_time
+
+        self._metrics = ModelEvaluator.evaluate_model(
+            self._model,
+            split.X_test,
+            split.y_test,
+            n_train=split.n_train,
+            n_val=split.n_val,
+            training_time=training_time,
+            model_version=self._model_version,
+        )
+
+        ModelEvaluator.print_metrics(self._metrics)
+
+        return self._metrics
+
     def save(self, output_dir: Path) -> Path:
         """Save trained model and metrics.
 
@@ -196,14 +251,52 @@ class ModelTrainer:
 
         # Save metrics
         if self._metrics:
-            import json
-
             metrics_path = output_dir / f"{self._model_type}_{self._model_version}_metrics.json"
             with open(metrics_path, "w") as f:
                 json.dump(self._metrics.model_dump(), f, indent=2, default=str)
             print(f"Metrics saved to: {metrics_path}")
 
         return model_path
+
+    def _preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply preprocessing pipeline to training data.
+
+        Args:
+            df: Raw DataFrame
+
+        Returns:
+            Preprocessed DataFrame
+        """
+        from ticket_price_predictor.preprocessing import (
+            PipelineBuilder,
+            PreprocessingConfig,
+            QualityReporter,
+        )
+
+        config = PreprocessingConfig()
+        pipeline = PipelineBuilder.build_listings_pipeline(config=config)
+
+        result = pipeline.process(df)
+
+        # Report quality metrics
+        reporter = QualityReporter(config)
+        metrics = reporter.extract_metrics(result)
+        print("\nPreprocessing Quality Report:")
+        print(f"  Input rows:  {metrics.input_rows:,}")
+        print(f"  Output rows: {metrics.output_rows:,}")
+        print(f"  Drop rate:   {metrics.drop_rate:.2f}%")
+        print(f"  Alert level: {reporter.check_thresholds(metrics).value.upper()}")
+        print()
+
+        if result.issues:
+            print(f"Preprocessing issues found: {len(result.issues)}")
+            for issue in result.issues[:5]:  # Show first 5
+                print(f"  - {issue}")
+            if len(result.issues) > 5:
+                print(f"  ... and {len(result.issues) - 5} more")
+            print()
+
+        return result.data
 
     @classmethod
     def load(cls, model_path: Path, model_type: ModelType) -> PriceModel:

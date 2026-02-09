@@ -1,0 +1,282 @@
+{
+  "coors light birds nest": {
+    "data": {
+      "name": "Coors Light Birds Nest",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-08T15:53:52.544875"
+    },
+    "cached_at": "2026-02-08T15:53:52.545217"
+  },
+  "bruno mars": {
+    "data": {
+      "name": "Bruno Mars",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.219474"
+    },
+    "cached_at": "2026-02-09T14:42:36.219557"
+  },
+  "bts - bangtan boys": {
+    "data": {
+      "name": "BTS - Bangtan Boys",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.220530"
+    },
+    "cached_at": "2026-02-09T14:42:36.220562"
+  },
+  "morgan wallen": {
+    "data": {
+      "name": "Morgan Wallen",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.221448"
+    },
+    "cached_at": "2026-02-09T14:42:36.221475"
+  },
+  "ariana grande": {
+    "data": {
+      "name": "Ariana Grande",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.222227"
+    },
+    "cached_at": "2026-02-09T14:42:36.222264"
+  },
+  "lady gaga": {
+    "data": {
+      "name": "Lady Gaga",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.222954"
+    },
+    "cached_at": "2026-02-09T14:42:36.222972"
+  },
+  "harry styles": {
+    "data": {
+      "name": "Harry Styles",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.223579"
+    },
+    "cached_at": "2026-02-09T14:42:36.223593"
+  },
+  "olivia dean": {
+    "data": {
+      "name": "Olivia Dean",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.224354"
+    },
+    "cached_at": "2026-02-09T14:42:36.224382"
+  },
+  "rush - rock band": {
+    "data": {
+      "name": "Rush - Rock Band",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.225062"
+    },
+    "cached_at": "2026-02-09T14:42:36.225080"
+  },
+  "the eagles": {
+    "data": {
+      "name": "The Eagles",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.225703"
+    },
+    "cached_at": "2026-02-09T14:42:36.225716"
+  },
+  "chris stapleton": {
+    "data": {
+      "name": "Chris Stapleton",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.226718"
+    },
+    "cached_at": "2026-02-09T14:42:36.226747"
+  },
+  "dolly parton": {
+    "data": {
+      "name": "Dolly Parton",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.227382"
+    },
+    "cached_at": "2026-02-09T14:42:36.227398"
+  },
+  "backstreet boys": {
+    "data": {
+      "name": "Backstreet Boys",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.228479"
+    },
+    "cached_at": "2026-02-09T14:42:36.228494"
+  },
+  "megan moroney": {
+    "data": {
+      "name": "Megan Moroney",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.229250"
+    },
+    "cached_at": "2026-02-09T14:42:36.229267"
+  },
+  "alan jackson": {
+    "data": {
+      "name": "Alan Jackson",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.231179"
+    },
+    "cached_at": "2026-02-09T14:42:36.231205"
+  },
+  "george strait": {
+    "data": {
+      "name": "George Strait",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T14:42:36.233561"
+    },
+    "cached_at": "2026-02-09T14:42:36.233592"
+  },
+  "bts": {
+    "data": {
+      "name": "BTS",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T15:46:28.454642"
+    },
+    "cached_at": "2026-02-09T15:46:28.454678"
+  },
+  "taylor swift": {
+    "data": {
+      "name": "Taylor Swift",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T15:46:28.455414"
+    },
+    "cached_at": "2026-02-09T15:46:28.455435"
+  },
+  "beyonce": {
+    "data": {
+      "name": "Beyonce",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T15:46:28.455888"
+    },
+    "cached_at": "2026-02-09T15:46:28.455910"
+  },
+  "rush": {
+    "data": {
+      "name": "Rush",
+      "popularity_score": 0.0,
+      "tier": "low",
+      "spotify_popularity": null,
+      "spotify_followers": null,
+      "songkick_trackers": null,
+      "bandsintown_trackers": null,
+      "sources_available": [],
+      "last_updated": "2026-02-09T15:46:28.456290"
+    },
+    "cached_at": "2026-02-09T15:46:28.456302"
+  }
+}

@@ -1,45 +1,52 @@
-"""Performer/artist feature extraction."""
+"""Performer/artist feature extraction using data-driven statistics."""
 
 import pandas as pd
 
+from ticket_price_predictor.ml.features.artist_stats import ArtistStatsCache
 from ticket_price_predictor.ml.features.base import FeatureExtractor
 
 
 class PerformerFeatureExtractor(FeatureExtractor):
-    """Extract features related to performers/artists."""
+    """Extract features related to performers/artists.
 
-    # K-pop artists with high demand
-    KPOP_KEYWORDS = frozenset([
-        "blackpink", "bts", "twice", "stray kids", "aespa", "newjeans",
-        "seventeen", "nct", "exo", "red velvet", "itzy", "ive", "le sserafim",
-        "txt", "enhypen", "ateez", "skz", "got7", "monsta x", "mamamoo",
-    ])
+    Uses data-driven statistics computed from historical listing data
+    instead of hardcoded artist lists.
+    """
 
-    # Major artists with premium pricing
-    MAJOR_ARTISTS = frozenset([
-        "taylor swift", "beyonce", "coldplay", "ed sheeran", "eagles",
-        "the weeknd", "drake", "bad bunny", "harry styles", "adele",
-        "bruno mars", "lady gaga", "rihanna", "justin bieber", "billie eilish",
-        "post malone", "dua lipa", "ariana grande", "kanye west", "travis scott",
-    ])
+    def __init__(self, stats_cache: ArtistStatsCache | None = None) -> None:
+        """Initialize extractor.
 
-    # Country artists (different pricing patterns)
-    COUNTRY_ARTISTS = frozenset([
-        "morgan wallen", "zach bryan", "luke combs", "chris stapleton",
-        "kenny chesney", "jason aldean", "thomas rhett", "carrie underwood",
-        "luke bryan", "eric church", "lainey wilson", "cody johnson",
-    ])
+        Args:
+            stats_cache: Pre-computed artist statistics cache.
+                        If None, will be computed during fit().
+        """
+        self._stats_cache = stats_cache or ArtistStatsCache()
 
     @property
     def feature_names(self) -> list[str]:
         """Return list of feature names."""
         return [
-            "is_kpop",
-            "is_major_artist",
-            "is_country",
-            "popularity_tier",
-            "artist_name_length",
+            "artist_avg_price",
+            "artist_median_price",
+            "artist_price_std",
+            "artist_event_count",
+            "artist_listing_count",
+            "artist_premium_ratio",
+            "is_known_artist",
         ]
+
+    def fit(self, df: pd.DataFrame) -> "PerformerFeatureExtractor":
+        """Fit extractor by computing artist statistics.
+
+        Args:
+            df: Training DataFrame with artist_or_team and listing_price columns
+
+        Returns:
+            self
+        """
+        if not self._stats_cache.is_fitted:
+            self._stats_cache.fit(df)
+        return self
 
     def extract(self, df: pd.DataFrame) -> pd.DataFrame:
         """Extract performer features.
@@ -48,48 +55,29 @@ class PerformerFeatureExtractor(FeatureExtractor):
         """
         result = pd.DataFrame(index=df.index)
 
-        # Normalize artist names for matching
-        artist_lower = df["artist_or_team"].str.lower().str.strip()
+        # Get stats for each artist
+        stats_list = df["artist_or_team"].apply(self._stats_cache.get_stats)
 
-        # Boolean features
-        result["is_kpop"] = artist_lower.apply(self._is_kpop).astype(int)
-        result["is_major_artist"] = artist_lower.apply(self._is_major_artist).astype(int)
-        result["is_country"] = artist_lower.apply(self._is_country).astype(int)
+        # Extract features from stats
+        result["artist_avg_price"] = stats_list.apply(lambda s: s.avg_price)
+        result["artist_median_price"] = stats_list.apply(lambda s: s.median_price)
+        result["artist_price_std"] = stats_list.apply(lambda s: s.price_std)
+        result["artist_event_count"] = stats_list.apply(lambda s: float(s.event_count))
+        result["artist_listing_count"] = stats_list.apply(lambda s: float(s.listing_count))
+        result["artist_premium_ratio"] = stats_list.apply(lambda s: s.premium_ratio)
 
-        # Popularity tier (1-5)
-        result["popularity_tier"] = result.apply(
-            lambda row: self._compute_popularity_tier(
-                row["is_kpop"], row["is_major_artist"], row["is_country"]
-            ),
-            axis=1,
+        # Flag for known vs unknown artists
+        result["is_known_artist"] = df["artist_or_team"].apply(
+            lambda a: 1 if self._stats_cache.is_known_artist(a) else 0
         )
-
-        # Artist name length (proxy for complexity/uniqueness)
-        result["artist_name_length"] = df["artist_or_team"].str.len()
 
         return result
 
-    def _is_kpop(self, artist: str) -> bool:
-        """Check if artist is K-pop."""
-        return any(kw in artist for kw in self.KPOP_KEYWORDS)
+    @property
+    def stats_cache(self) -> ArtistStatsCache:
+        """Return the artist stats cache."""
+        return self._stats_cache
 
-    def _is_major_artist(self, artist: str) -> bool:
-        """Check if artist is a major headliner."""
-        return any(major in artist for major in self.MAJOR_ARTISTS)
-
-    def _is_country(self, artist: str) -> bool:
-        """Check if artist is country."""
-        return any(c in artist for c in self.COUNTRY_ARTISTS)
-
-    def _compute_popularity_tier(
-        self, is_kpop: int, is_major: int, is_country: int
-    ) -> int:
-        """Compute popularity tier 1-5."""
-        if is_kpop:
-            return 5  # Highest tier - K-pop has extreme demand
-        elif is_major:
-            return 4  # Major artists
-        elif is_country:
-            return 3  # Country (strong regional demand)
-        else:
-            return 2  # Default mid-tier
+    def get_params(self) -> dict:
+        """Return extractor parameters."""
+        return {"stats_cache_fitted": self._stats_cache.is_fitted}

@@ -13,125 +13,101 @@ Usage:
 """
 
 import asyncio
-import json
-import re
 from datetime import datetime
 from pathlib import Path
 
-from playwright.async_api import async_playwright
-from playwright_stealth import Stealth
-
 from ticket_price_predictor.ingestion import DataSource, ListingCollector
+from ticket_price_predictor.popularity import PopularityService
 from ticket_price_predictor.storage import ListingRepository
 
 
-async def get_popular_events(max_events: int = 20) -> list[dict]:
-    """Fetch top popular events from Vivid Seats.
+async def get_popular_events(
+    max_events: int = 20,
+    popularity_service: PopularityService | None = None,
+) -> list[dict]:
+    """Fetch top popular events from Vivid Seats using search.
 
-    Gets events from popular performers (not parking passes or small events).
+    Uses search_events() for each performer instead of navigating to
+    performer pages, which VividSeats manipulates for scrapers.
 
     Args:
         max_events: Maximum number of events to return
+        popularity_service: Optional PopularityService for ranking performers
 
     Returns:
         List of event dictionaries with name, url, etc.
     """
+    from ticket_price_predictor.scrapers import VividSeatsScraper
+
     print("Fetching popular performers and their events...")
 
-    playwright = await async_playwright().start()
-    browser = await playwright.chromium.launch(headless=True)
-    context = await browser.new_context(
-        viewport={"width": 1920, "height": 1080},
-        user_agent=(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-    )
-    page = await context.new_page()
-    stealth = Stealth()
-    await stealth.apply_stealth_async(page)
+    # Pre-defined list of popular performers to search
+    # These are known high-ticket-volume artists
+    popular_performers = [
+        "Bruno Mars",
+        "Lady Gaga",
+        "Morgan Wallen",
+        "BTS",
+        "Taylor Swift",
+        "Beyonce",
+        "The Eagles",
+        "Chris Stapleton",
+        "Ariana Grande",
+        "Harry Styles",
+        "Backstreet Boys",
+        "George Strait",
+        "Megan Moroney",
+        "Olivia Dean",
+        "Rush",
+    ]
+
+    # Use popularity service to rank if available
+    if popularity_service:
+        ranked = popularity_service.rank_performers(popular_performers)
+        performer_names = [p.name for p in ranked]
+        tier_lookup = {p.name.lower(): p.tier_allocation for p in ranked}
+        print(f"  Using popularity-ranked selection: {len(performer_names)} performers")
+    else:
+        performer_names = popular_performers[:10]
+        tier_lookup = {}
 
     events = []
 
-    # Get popular performers from concerts page
-    await page.goto("https://www.vividseats.com/concerts", wait_until="load")
-    await asyncio.sleep(3)
+    # Use single browser session for all searches
+    async with VividSeatsScraper(headless=True, delay_seconds=2.0) as scraper:
+        for performer_name in performer_names:
+            if len(events) >= max_events:
+                break
 
-    html = await page.content()
-    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>([^<]+)</script>', html)
+            # Get tier-based event allocation (default to 2 if no popularity data)
+            events_to_collect = tier_lookup.get(performer_name.lower(), 2)
 
-    performers = []
-    if match:
-        data = json.loads(match.group(1))
-        page_props = data.get("props", {}).get("pageProps", {})
+            try:
+                # Use search which works correctly
+                scraped_events = await scraper.search_events(
+                    performer_name,
+                    max_results=events_to_collect,
+                )
 
-        # Get popular performers
-        pop_data = page_props.get("initialPopularPerformersData", {})
-        if isinstance(pop_data, dict):
-            performers = pop_data.get("items", [])
-        elif isinstance(pop_data, list):
-            performers = pop_data
-
-        print(f"  Found {len(performers)} popular performers")
-
-    # For each popular performer, get their upcoming events
-    for performer in performers[:10]:  # Top 10 performers
-        if len(events) >= max_events:
-            break
-
-        performer_name = performer.get("name", "Unknown")
-        web_path = performer.get("webPath", "")
-
-        if not web_path:
-            continue
-
-        try:
-            performer_url = f"https://www.vividseats.com{web_path}"
-            await page.goto(performer_url, wait_until="load")
-            await asyncio.sleep(2)
-
-            html = await page.content()
-            match = re.search(r'<script id="__NEXT_DATA__"[^>]*>([^<]+)</script>', html)
-
-            if match:
-                data = json.loads(match.group(1))
-                page_props = data.get("props", {}).get("pageProps", {})
-
-                # Get production list (events)
-                prod_data = page_props.get("initialProductionListData", {})
-                items = prod_data.get("items", [])
-
-                # Get events with tickets
-                for item in items[:3]:  # Up to 3 events per performer
+                for e in scraped_events:
                     if len(events) >= max_events:
                         break
 
-                    event_web_path = item.get("webPath", "")
-                    ticket_count = item.get("ticketCount", 0)
-
-                    # Skip events with no tickets
-                    if not event_web_path or ticket_count < 10:
-                        continue
-
                     events.append({
-                        "id": str(item.get("id", "")),
-                        "name": item.get("name", "Unknown"),
-                        "url": f"https://www.vividseats.com{event_web_path}",
-                        "venue": item.get("venue", {}).get("name", "Unknown"),
-                        "city": item.get("venue", {}).get("city", "Unknown"),
-                        "min_price": item.get("minPrice"),
-                        "ticket_count": ticket_count,
+                        "id": e.stubhub_event_id,
+                        "name": e.event_name,
+                        "url": e.event_url,
+                        "venue": e.venue_name,
+                        "city": e.city,
+                        "min_price": e.min_price,
+                        "ticket_count": e.ticket_count,
                         "performer": performer_name,
                     })
 
-                print(f"  {performer_name}: {len(items)} events, added {min(len(items), 3)}")
+                print(f"  {performer_name}: {len(scraped_events)} events, added {min(len(scraped_events), events_to_collect)}")
 
-        except Exception as e:
-            print(f"  Error fetching {performer_name}: {e}")
-
-    await browser.close()
-    await playwright.stop()
+            except Exception as e:
+                print(f"  Error fetching {performer_name}: {e}")
 
     return events[:max_events]
 
@@ -143,6 +119,9 @@ async def collect_listings_for_events(
 ) -> dict:
     """Collect listings for a list of events.
 
+    Uses a SINGLE browser session for all events to avoid repeated
+    browser launches and reduce timeouts.
+
     Args:
         events: List of event dictionaries
         data_dir: Data storage directory
@@ -151,11 +130,14 @@ async def collect_listings_for_events(
     Returns:
         Summary statistics
     """
-    collector = ListingCollector(
-        data_dir=data_dir,
-        delay_seconds=3.0,
-        source=DataSource.VIVIDSEATS,
-    )
+    from datetime import UTC, datetime
+
+    from ticket_price_predictor.schemas import ScrapedEvent, create_listing_from_scraped
+    from ticket_price_predictor.scrapers import VividSeatsScraper
+    from ticket_price_predictor.storage import ListingRepository
+
+    repository = ListingRepository(data_dir)
+    timestamp = datetime.now(UTC)
 
     stats = {
         "events_attempted": len(events),
@@ -164,33 +146,50 @@ async def collect_listings_for_events(
         "errors": [],
     }
 
-    for i, event in enumerate(events, 1):
-        print(f"\n[{i}/{len(events)}] {event['name'][:50]}...")
+    # Use a SINGLE browser session for all events
+    async with VividSeatsScraper(headless=True, delay_seconds=3.0) as scraper:
+        for i, event in enumerate(events, 1):
+            print(f"\n[{i}/{len(events)}] {event['name'][:50]}...")
 
-        try:
-            result = await collector.collect_for_event_url(
-                event_url=event["url"],
-                event_name=event["name"],
-                artist_name=event.get("performer", "Unknown Artist"),
-                venue_name=event["venue"],
-                city=event["city"],
-                max_listings=max_listings_per_event,
-            )
+            try:
+                # Get listings using persistent browser session
+                scraped_listings = await scraper.get_event_listings(
+                    event["url"],
+                    max_listings=max_listings_per_event,
+                )
 
-            if result.listings_saved > 0:
-                stats["events_succeeded"] += 1
-                stats["total_listings"] += result.listings_saved
-                print(f"    Collected {result.listings_saved} listings")
-            else:
-                print(f"    No listings found")
+                if scraped_listings:
+                    # Create event object for conversion
+                    scraped_event = ScrapedEvent(
+                        stubhub_event_id=event.get("id", ""),
+                        event_name=event["name"],
+                        artist_or_team=event.get("performer", "Unknown Artist"),
+                        venue_name=event["venue"],
+                        city=event["city"],
+                        event_datetime=datetime.now(UTC),
+                        event_url=event["url"],
+                    )
 
-            if result.errors:
-                stats["errors"].extend(result.errors)
+                    # Convert and save listings
+                    listings = [
+                        create_listing_from_scraped(s, scraped_event, timestamp)
+                        for s in scraped_listings
+                    ]
+                    saved = repository.save_listings(listings)
 
-        except Exception as e:
-            error_msg = f"{event['name']}: {e}"
-            stats["errors"].append(error_msg)
-            print(f"    Error: {e}")
+                    stats["events_succeeded"] += 1
+                    stats["total_listings"] += saved
+                    if saved > 0:
+                        print(f"    Collected {saved} new listings (from {len(scraped_listings)} found)")
+                    else:
+                        print(f"    Found {len(scraped_listings)} listings (no price changes)")
+                else:
+                    print("    No listings found")
+
+            except Exception as e:
+                error_msg = f"{event['name']}: {e}"
+                stats["errors"].append(error_msg)
+                print(f"    Error: {e}")
 
     return stats
 
@@ -198,8 +197,13 @@ async def collect_listings_for_events(
 async def main() -> None:
     """Main entry point."""
     data_dir = Path("data")
-    max_events = 20
     max_listings_per_event = 100
+
+    # Initialize popularity service
+    pop_service = PopularityService()
+
+    # Default max events (actual count determined by tier allocations in get_popular_events)
+    max_events = 30
 
     print("=" * 60)
     print("POPULAR EVENTS MONITOR")
@@ -209,8 +213,11 @@ async def main() -> None:
     print(f"Max listings per event: {max_listings_per_event}")
     print()
 
-    # Get popular events
-    events = await get_popular_events(max_events=max_events)
+    # Get popular events with popularity-based ranking
+    events = await get_popular_events(
+        max_events=max_events,
+        popularity_service=pop_service,
+    )
     print(f"\nFound {len(events)} popular events to monitor:")
     for i, event in enumerate(events, 1):
         price_str = f"${event['min_price']}" if event['min_price'] else "N/A"

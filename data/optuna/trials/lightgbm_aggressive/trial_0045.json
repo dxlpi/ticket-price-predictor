@@ -1,0 +1,29 @@
+{
+  "trial_id": 45,
+  "status": "COMPLETE",
+  "value": 119.38373048822797,
+  "params": {
+    "num_leaves": 255,
+    "max_depth": 10,
+    "learning_rate": 0.03480402911202372,
+    "n_estimators": 1200,
+    "feature_fraction": 0.6830815987938728,
+    "bagging_fraction": 0.676052737154196,
+    "bagging_freq": 5,
+    "min_child_samples": 50,
+    "reg_alpha": 2.701276056529418,
+    "reg_lambda": 0.41282240988567653
+  },
+  "user_attrs": {
+    "best_iteration": 49,
+    "dominance_penalty": 0,
+    "max_feature_importance": 0.4964557527165144,
+    "top_feature": "artist_avg_price",
+    "train_mae": 104.03522637976864,
+    "val_r2": 0.48652570553970453,
+    "val_rmse": 340.475743053345
+  },
+  "datetime_start": "2026-02-03T17:38:58.272377",
+  "datetime_complete": "2026-02-03T17:38:58.627607",
+  "duration_seconds": 0.35523
+}

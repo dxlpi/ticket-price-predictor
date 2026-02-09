@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ticket_price_predictor.config import get_ml_config
 from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
 from ticket_price_predictor.ml.inference.cold_start import ColdStartHandler
 from ticket_price_predictor.ml.models.base import PriceModel
@@ -12,6 +13,8 @@ from ticket_price_predictor.ml.models.lightgbm_model import QuantileLightGBMMode
 from ticket_price_predictor.ml.schemas import PricePrediction
 from ticket_price_predictor.ml.training.trainer import ModelTrainer
 from ticket_price_predictor.normalization.seat_zones import SeatZone
+
+_config = get_ml_config()
 
 
 class PricePredictor:
@@ -33,7 +36,7 @@ class PricePredictor:
         self._model = model
         self._model_version = model_version
         self._cold_start = cold_start_handler or ColdStartHandler()
-        self._feature_pipeline = FeaturePipeline(include_momentum=False)
+        self._feature_pipeline = FeaturePipeline(include_momentum=True)
 
     @classmethod
     def from_path(
@@ -121,29 +124,35 @@ class PricePredictor:
         else:
             preds = self._model.predict(X)
             predicted_price = float(preds[0])
-            # Estimate bounds as ±15% for non-quantile models
-            price_lower = predicted_price * 0.85
-            price_upper = predicted_price * 1.15
+            # Estimate bounds using config margin for non-quantile models
+            price_lower = predicted_price * (1 - _config.price_bound_margin)
+            price_upper = predicted_price * (1 + _config.price_bound_margin)
 
         # Calculate confidence based on interval width
         if price_upper > 0:
             confidence = 1.0 - min((price_upper - price_lower) / predicted_price, 1.0)
         else:
-            confidence = 0.5
+            confidence = _config.default_confidence
 
         # Determine direction (simplified: compare to cold-start estimate)
         cold_start = self._cold_start.get_estimate(artist_or_team, event_type)
         baseline = cold_start.prices_by_zone.get(seat_zone, predicted_price)
 
-        if predicted_price > baseline * 1.05:
+        if predicted_price > baseline * _config.direction_up_threshold:
             direction = "UP"
-            direction_prob = min(0.9, 0.5 + (predicted_price - baseline) / baseline)
-        elif predicted_price < baseline * 0.95:
+            direction_prob = min(
+                _config.direction_max_probability,
+                0.5 + (predicted_price - baseline) / baseline
+            )
+        elif predicted_price < baseline * _config.direction_down_threshold:
             direction = "DOWN"
-            direction_prob = min(0.9, 0.5 + (baseline - predicted_price) / baseline)
+            direction_prob = min(
+                _config.direction_max_probability,
+                0.5 + (baseline - predicted_price) / baseline
+            )
         else:
             direction = "STABLE"
-            direction_prob = 0.6
+            direction_prob = _config.direction_stable_probability
 
         return PricePrediction(
             event_id=event_id,

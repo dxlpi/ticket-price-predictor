@@ -1,8 +1,19 @@
 """Cold-start handling for new events and performers."""
 
-from dataclasses import dataclass
+from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from ticket_price_predictor.config import get_ml_config
 from ticket_price_predictor.normalization.seat_zones import SeatZone
+
+if TYPE_CHECKING:
+    from ticket_price_predictor.popularity.service import PopularityService
+
+logger = logging.getLogger(__name__)
+_config = get_ml_config()
 
 
 @dataclass
@@ -17,36 +28,34 @@ class ColdStartEstimate:
 class ColdStartHandler:
     """Handle predictions for new events and performers."""
 
-    # Global default prices by zone (based on typical market data)
+    # Global default prices by zone (from centralized config)
     GLOBAL_ZONE_DEFAULTS = {
-        SeatZone.FLOOR_VIP: 450.0,
-        SeatZone.LOWER_TIER: 250.0,
-        SeatZone.UPPER_TIER: 150.0,
-        SeatZone.BALCONY: 75.0,
+        SeatZone.FLOOR_VIP: _config.default_floor_vip_price,
+        SeatZone.LOWER_TIER: _config.default_lower_tier_price,
+        SeatZone.UPPER_TIER: _config.default_upper_tier_price,
+        SeatZone.BALCONY: _config.default_balcony_price,
     }
 
-    # Demand multipliers by artist category
-    DEMAND_MULTIPLIERS = {
-        "kpop": 2.5,
-        "major": 2.0,
-        "country": 1.5,
-        "default": 1.0,
-    }
+    # Demand multipliers by popularity tier (data-driven, from config)
+    TIER_MULTIPLIERS = _config.get_tier_multipliers()
 
-    # K-pop keywords for detection
+    # Legacy demand multipliers by artist category (fallback, from config)
+    DEMAND_MULTIPLIERS = _config.get_category_multipliers()
+
+    # K-pop keywords for detection (fallback when PopularityService unavailable)
     KPOP_KEYWORDS = frozenset([
         "blackpink", "bts", "twice", "stray kids", "aespa", "newjeans",
         "seventeen", "nct", "exo", "red velvet", "itzy", "ive", "le sserafim",
     ])
 
-    # Major artist keywords
+    # Major artist keywords (fallback)
     MAJOR_ARTISTS = frozenset([
         "taylor swift", "beyonce", "coldplay", "ed sheeran", "eagles",
         "the weeknd", "drake", "bad bunny", "harry styles", "adele",
         "bruno mars", "lady gaga", "billie eilish", "post malone",
     ])
 
-    # Country artist keywords
+    # Country artist keywords (fallback)
     COUNTRY_ARTISTS = frozenset([
         "morgan wallen", "zach bryan", "luke combs", "chris stapleton",
         "kenny chesney", "jason aldean", "thomas rhett", "carrie underwood",
@@ -55,13 +64,16 @@ class ColdStartHandler:
     def __init__(
         self,
         historical_prices: dict[str, dict[SeatZone, float]] | None = None,
+        popularity_service: PopularityService | None = None,
     ) -> None:
         """Initialize cold-start handler.
 
         Args:
             historical_prices: Dictionary mapping artist names to zone prices
+            popularity_service: Optional PopularityService for data-driven tier detection
         """
         self._historical_prices = historical_prices or {}
+        self._popularity_service = popularity_service
 
     def get_estimate(
         self,
@@ -85,39 +97,38 @@ class ColdStartHandler:
         if artist_lower in self._historical_prices:
             return ColdStartEstimate(
                 prices_by_zone=self._historical_prices[artist_lower],
-                confidence=0.7,
+                confidence=_config.confidence_performer_history,
                 source="performer_history",
             )
 
-        # Fall back to heuristic-based estimation
-        return self._heuristic_estimate(artist_lower, event_type, city_tier)
+        # Fall back to heuristic-based estimation (pass original name for PopularityService)
+        return self._heuristic_estimate(artist_name, event_type, city_tier)
 
     def _heuristic_estimate(
         self,
-        artist_lower: str,
+        artist_name: str,
         event_type: str,
         city_tier: int,
     ) -> ColdStartEstimate:
         """Generate heuristic-based price estimate.
 
         Args:
-            artist_lower: Lowercase artist name
+            artist_name: Artist name (original case preserved for PopularityService)
             event_type: Event type
             city_tier: City tier
 
         Returns:
             ColdStartEstimate
         """
-        # Determine artist category
-        category = self._detect_category(artist_lower)
-        multiplier = self.DEMAND_MULTIPLIERS[category]
+        # Get demand multiplier (data-driven or keyword fallback)
+        multiplier, source = self._get_tier_multiplier(artist_name)
 
-        # City tier adjustment
-        city_multiplier = {1: 1.2, 2: 1.0, 3: 0.8}.get(city_tier, 1.0)
+        # City tier adjustment (from config)
+        city_multiplier = _config.get_city_multipliers().get(city_tier, _config.city_multiplier_tier2)
 
-        # Event type adjustment
-        event_multiplier = {"CONCERT": 1.0, "SPORTS": 0.9, "THEATER": 1.1}.get(
-            event_type, 1.0
+        # Event type adjustment (from config)
+        event_multiplier = _config.get_event_multipliers().get(
+            event_type, _config.event_multiplier_concert
         )
 
         # Calculate prices
@@ -127,14 +138,56 @@ class ColdStartHandler:
             for zone, price in self.GLOBAL_ZONE_DEFAULTS.items()
         }
 
-        return ColdStartEstimate(
-            prices_by_zone=prices,
-            confidence=0.3,  # Low confidence for heuristic
-            source="heuristic",
+        # Higher confidence when using PopularityService (from config)
+        confidence = (
+            _config.confidence_popularity_service
+            if source == "popularity_service"
+            else _config.confidence_keyword_fallback
         )
 
-    def _detect_category(self, artist_lower: str) -> str:
-        """Detect artist category from name.
+        return ColdStartEstimate(
+            prices_by_zone=prices,
+            confidence=confidence,
+            source=f"heuristic_{source}",
+        )
+
+    def _get_tier_multiplier(self, artist_name: str) -> tuple[float, str]:
+        """Get demand multiplier based on artist popularity tier.
+
+        Uses PopularityService for data-driven tier detection, with fallback
+        to keyword matching when service is unavailable.
+
+        Args:
+            artist_name: Artist name (will be lowercased)
+
+        Returns:
+            Tuple of (multiplier, source) where source is "popularity_service" or "keyword_fallback"
+        """
+        artist_lower = artist_name.lower().strip()
+
+        # Try PopularityService first (data-driven approach)
+        if self._popularity_service is not None:
+            try:
+                popularity = self._popularity_service.get_artist_popularity(artist_name)
+                tier = popularity.tier.value  # "high", "medium", or "low"
+                multiplier = self.TIER_MULTIPLIERS.get(tier, 1.0)
+                logger.debug(
+                    f"PopularityService tier for '{artist_name}': {tier} -> {multiplier}x"
+                )
+                return multiplier, "popularity_service"
+            except Exception as e:
+                logger.warning(
+                    f"PopularityService lookup failed for '{artist_name}': {e}, "
+                    "falling back to keyword matching"
+                )
+
+        # Fallback to keyword-based detection
+        category = self._detect_category_keywords(artist_lower)
+        multiplier = self.DEMAND_MULTIPLIERS[category]
+        return multiplier, "keyword_fallback"
+
+    def _detect_category_keywords(self, artist_lower: str) -> str:
+        """Detect artist category from name using keyword matching (fallback).
 
         Args:
             artist_lower: Lowercase artist name

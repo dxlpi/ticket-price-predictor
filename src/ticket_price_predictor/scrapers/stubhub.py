@@ -306,26 +306,87 @@ class StubHubScraper:
     async def get_event_listings(
         self,
         event_url: str,
-        max_listings: int = 500,
+        max_listings: int = 1000,
+        page_size: int = 100,
     ) -> list[ScrapedListing]:
-        """Get all ticket listings for an event.
+        """Get all ticket listings for an event with pagination support.
 
         Args:
             event_url: StubHub event page URL
-            max_listings: Maximum listings to fetch
+            max_listings: Maximum listings to fetch (default 1000)
+            page_size: Number of listings per page (for API pagination)
 
         Returns:
             List of ScrapedListing objects
         """
+        all_listings: list[ScrapedListing] = []
+        seen_ids: set[str] = set()
+
+        # Extract event ID from URL for API requests
+        event_id_match = re.search(r"/event/(\d+)", event_url)
+        event_id = event_id_match.group(1) if event_id_match else None
+
+        # First, try fetching from the page
         response = await self._request(event_url)
         html = response.text
 
         listings = self._parse_listings_page(html)
+        for listing in listings:
+            if listing.listing_id not in seen_ids:
+                all_listings.append(listing)
+                seen_ids.add(listing.listing_id)
 
-        # If we need more and there's pagination, fetch more pages
-        # (StubHub often loads listings via JS, so we may get limited results)
+        # If we have an event ID and need more listings, try pagination via API
+        if event_id and len(all_listings) < max_listings:
+            page = 1
+            max_pages = (max_listings // page_size) + 1
 
-        return listings[:max_listings]
+            while len(all_listings) < max_listings and page <= max_pages:
+                try:
+                    # Try StubHub's internal API for listings
+                    api_url = f"{self.API_BASE}/events/{event_id}/listings"
+                    params = {
+                        "start": (page - 1) * page_size,
+                        "rows": page_size,
+                        "sort": "price asc",
+                    }
+
+                    response = await self._request(api_url, params=params)
+
+                    # Try to parse as JSON
+                    try:
+                        data = response.json()
+                        page_listings = self._extract_listings_from_json(data)
+
+                        if not page_listings:
+                            # No more listings, stop pagination
+                            break
+
+                        new_count = 0
+                        for listing in page_listings:
+                            if listing.listing_id not in seen_ids:
+                                all_listings.append(listing)
+                                seen_ids.add(listing.listing_id)
+                                new_count += 1
+
+                        if new_count == 0:
+                            # All listings were duplicates, stop
+                            break
+
+                    except (json.JSONDecodeError, ValueError):
+                        # Not JSON, stop API pagination
+                        break
+
+                    page += 1
+
+                    # Rate limiting between pages
+                    await asyncio.sleep(self._delay * 0.5)
+
+                except (httpx.HTTPStatusError, httpx.RequestError):
+                    # API pagination failed, continue with what we have
+                    break
+
+        return all_listings[:max_listings]
 
     def _parse_listings_page(self, html: str) -> list[ScrapedListing]:
         """Parse listings from event page HTML."""
