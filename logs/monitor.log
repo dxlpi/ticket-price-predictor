@@ -7244,3 +7244,199 @@ Total events being monitored: 41
 Total listings in database: 13170
 
 Completed at: 2026-02-11T21:11:47.768426
+PopularityService initialized with no API sources configured
+============================================================
+POPULAR EVENTS MONITOR
+============================================================
+Timestamp: 2026-02-11T22:11:48.662085
+Max events: 30
+Max listings per event: 100
+
+Fetching popular performers and their events...
+  Using popularity-ranked selection: 15 performers
+  Bruno Mars: 1 events, added 1
+  Lady Gaga: 1 events, added 1
+  Morgan Wallen: 1 events, added 1
+  BTS: 1 events, added 1
+  Taylor Swift: 0 events, added 0
+  Beyonce: 0 events, added 0
+  The Eagles: 1 events, added 1
+  Chris Stapleton: 1 events, added 1
+  Ariana Grande: 1 events, added 1
+  Harry Styles: 1 events, added 1
+  Backstreet Boys: 1 events, added 1
+  George Strait: 1 events, added 1
+  Megan Moroney: 1 events, added 1
+  Olivia Dean: 1 events, added 1
+  Rush: 1 events, added 1
+
+Found 13 popular events to monitor:
+   1. [Bruno Mars] Bruno Mars - $171.0 (2883 tix)
+   2. [Lady Gaga] Lady Gaga - $163.4 (611 tix)
+   3. [Morgan Wallen] Morgan Wallen - $79.8 (4855 tix)
+   4. [BTS] BTS - $125.4 (4909 tix)
+   5. [The Eagles] The Eagles - $386.65 (671 tix)
+   6. [Chris Stapleton] Chris Stapleton - $119.7 (433 tix)
+   7. [Ariana Grande] Ariana Grande - $602.7 (257 tix)
+   8. [Harry Styles] Harry Styles - $138.7 (814 tix)
+   9. [Backstreet Boys] Backstreet Boys - $338.2 (327 tix)
+  10. [George Strait] George Strait - $148.2 (2629 tix)
+  11. [Megan Moroney] Houston Rodeo - Megan Moroney - $37.05 (10336 tix)
+  12. [Olivia Dean] Olivia Dean - $277.34 (40 tix)
+  13. [Rush] Rush - $148.2 (889 tix)
+
+============================================================
+COLLECTING LISTINGS
+============================================================
+
+[1/13] Bruno Mars...
+    Found 100 listings (no price changes)
+
+[2/13] Lady Gaga...
+    Collected 1 new listings (from 100 found)
+
+[3/13] Morgan Wallen...
+    Found 100 listings (no price changes)
+
+[4/13] BTS...
+    Found 100 listings (no price changes)
+
+[5/13] The Eagles...
+    Found 100 listings (no price changes)
+
+[6/13] Chris Stapleton...
+    Collected 1 new listings (from 100 found)
+
+[7/13] Ariana Grande...
+    Collected 1 new listings (from 86 found)
+
+[8/13] Harry Styles...
+    Found 100 listings (no price changes)
+
+[9/13] Backstreet Boys...
+    Collected 2 new listings (from 100 found)
+
+[10/13] George Strait...
+    Found 100 listings (no price changes)
+
+[11/13] Houston Rodeo - Megan Moroney...
+    Found 100 listings (no price changes)
+
+[12/13] Olivia Dean...
+    Found 13 listings (no price changes)
+
+[13/13] Rush...
+    Found 100 listings (no price changes)
+
+============================================================
+COLLECTION SUMMARY
+============================================================
+Events attempted: 13
+Events succeeded: 13
+Total listings collected: 5
+
+============================================================
+CURRENT DATA STATS
+============================================================
+Total events being monitored: 41
+Total listings in database: 13175
+
+Completed at: 2026-02-11T22:16:14.239170
+PopularityService initialized with no API sources configured
+============================================================
+POPULAR EVENTS MONITOR
+============================================================
+Timestamp: 2026-02-11T23:31:19.483676
+Max events: 30
+Max listings per event: 100
+
+Fetching popular performers and their events...
+  Using popularity-ranked selection: 15 performers
+  Bruno Mars: 1 events, added 1
+  Lady Gaga: 1 events, added 1
+  Morgan Wallen: 1 events, added 1
+  BTS: 1 events, added 1
+  Taylor Swift: 0 events, added 0
+  Beyonce: 0 events, added 0
+  The Eagles: 1 events, added 1
+  Chris Stapleton: 1 events, added 1
+  Ariana Grande: 1 events, added 1
+  Harry Styles: 1 events, added 1
+  Backstreet Boys: 1 events, added 1
+  George Strait: 1 events, added 1
+  Megan Moroney: 1 events, added 1
+  Olivia Dean: 1 events, added 1
+  Rush: 1 events, added 1
+
+Found 13 popular events to monitor:
+   1. [Bruno Mars] Bruno Mars - $171.0 (2883 tix)
+   2. [Lady Gaga] Lady Gaga - $163.4 (605 tix)
+   3. [Morgan Wallen] Morgan Wallen - $79.8 (4855 tix)
+   4. [BTS] BTS - $125.4 (4909 tix)
+   5. [The Eagles] The Eagles - $386.65 (671 tix)
+   6. [Chris Stapleton] Chris Stapleton - $123.5 (433 tix)
+   7. [Ariana Grande] Ariana Grande - $602.7 (257 tix)
+   8. [Harry Styles] Harry Styles - $138.7 (814 tix)
+   9. [Backstreet Boys] Backstreet Boys - $337.25 (332 tix)
+  10. [George Strait] George Strait - $148.2 (2629 tix)
+  11. [Megan Moroney] Houston Rodeo - Megan Moroney - $37.05 (10327 tix)
+  12. [Olivia Dean] Olivia Dean - $277.34 (40 tix)
+  13. [Rush] Rush - $148.2 (889 tix)
+
+============================================================
+COLLECTING LISTINGS
+============================================================
+
+[1/13] Bruno Mars...
+    Collected 6 new listings (from 100 found)
+
+[2/13] Lady Gaga...
+    Collected 7 new listings (from 100 found)
+
+[3/13] Morgan Wallen...
+    Found 100 listings (no price changes)
+
+[4/13] BTS...
+    Found 100 listings (no price changes)
+
+[5/13] The Eagles...
+    Found 100 listings (no price changes)
+
+[6/13] Chris Stapleton...
+    Collected 2 new listings (from 100 found)
+
+[7/13] Ariana Grande...
+    Found 86 listings (no price changes)
+
+[8/13] Harry Styles...
+    Collected 10 new listings (from 100 found)
+
+[9/13] Backstreet Boys...
+    Collected 2 new listings (from 100 found)
+
+[10/13] George Strait...
+    Collected 3 new listings (from 100 found)
+
+[11/13] Houston Rodeo - Megan Moroney...
+    Found 100 listings (no price changes)
+
+[12/13] Olivia Dean...
+    Found 10 listings (no price changes)
+
+[13/13] Rush...
+    Collected 19 new listings (from 100 found)
+
+============================================================
+COLLECTION SUMMARY
+============================================================
+Events attempted: 13
+Events succeeded: 13
+Total listings collected: 49
+
+============================================================
+CURRENT DATA STATS
+============================================================
+Total events being monitored: 41
+Total listings in database: 13224
+
+Completed at: 2026-02-11T23:35:42.984548

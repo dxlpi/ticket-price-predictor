@@ -1,0 +1,17 @@
+{
+  "agents": [
+    {
+      "agent_id": "a6ee8c9",
+      "agent_type": "oh-my-claudecode:scientist",
+      "started_at": "2026-02-11T12:37:40.760Z",
+      "parent_mode": "none",
+      "status": "failed",
+      "completed_at": "2026-02-11T12:41:41.550Z",
+      "duration_ms": 240790
+    }
+  ],
+  "total_spawned": 1,
+  "total_completed": 0,
+  "total_failed": 1,
+  "last_updated": "2026-02-11T14:25:25.865Z"
+}
