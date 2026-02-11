@@ -1,5 +1,7 @@
 """Performer/artist feature extraction using data-driven statistics."""
 
+from typing import Any
+
 import pandas as pd
 
 from ticket_price_predictor.ml.features.artist_stats import ArtistStatsCache
@@ -78,6 +80,6 @@ class PerformerFeatureExtractor(FeatureExtractor):
         """Return the artist stats cache."""
         return self._stats_cache
 
-    def get_params(self) -> dict:
+    def get_params(self) -> dict[str, Any]:
         """Return extractor parameters."""
         return {"stats_cache_fitted": self._stats_cache.is_fitted}

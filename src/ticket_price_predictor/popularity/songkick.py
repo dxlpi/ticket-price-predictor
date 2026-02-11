@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SongkickMetrics:
     """Metrics from Songkick API."""
+
     songkick_id: int
     display_name: str
     on_tour: bool

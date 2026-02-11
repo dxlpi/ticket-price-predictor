@@ -1,7 +1,6 @@
 """Comprehensive tests for preprocessing pipeline."""
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -21,7 +20,6 @@ from ticket_price_predictor.preprocessing.quality import (
     AlertLevel,
     QualityMetrics,
     QualityReporter,
-    QualityThresholds,
 )
 from ticket_price_predictor.preprocessing.transformers import (
     EventMetadataJoiner,
@@ -37,7 +35,6 @@ from ticket_price_predictor.preprocessing.validators import (
 )
 from ticket_price_predictor.schemas import SeatZone
 
-
 # ============================================================================
 # Fixtures - Test Data Generation
 # ============================================================================
@@ -49,24 +46,38 @@ def sample_listings_df() -> pd.DataFrame:
     now = datetime.now(UTC)
     event_time = now + timedelta(days=30)
 
-    return pd.DataFrame({
-        "listing_id": ["L1", "L2", "L3", "L4", "L5"],
-        "event_id": ["E1", "E1", "E2", "E2", "E3"],
-        "timestamp": [now, now, now, now, now],
-        "event_datetime": [event_time] * 5,
-        "section": ["Orchestra", "Balcony", "Floor", "VIP", "Upper Deck"],
-        "row": ["A", "B", "C", "D", "E"],
-        "seat_from": ["1", "5", "10", "1", "20"],
-        "seat_to": ["2", "6", "12", "2", "22"],
-        "quantity": [2, 2, 3, 2, 3],
-        "listing_price": [150.0, 75.0, 200.0, 500.0, 50.0],
-        "total_price": [180.0, 90.0, 240.0, 600.0, 60.0],
-        "face_value": [100.0, 50.0, 150.0, 400.0, 30.0],
-        "days_to_event": [30, 30, 30, 30, 30],
-        "artist_or_team": ["Taylor Swift", "Taylor Swift", "Bruno Mars", "Bruno Mars", "Ed Sheeran"],
-        "venue_name": ["Madison Square Garden", "Madison Square Garden", "Staples Center", "Staples Center", "Red Rocks"],
-        "city": ["New York", "NYC", "Los Angeles", "LA", "Denver"],
-    })
+    return pd.DataFrame(
+        {
+            "listing_id": ["L1", "L2", "L3", "L4", "L5"],
+            "event_id": ["E1", "E1", "E2", "E2", "E3"],
+            "timestamp": [now, now, now, now, now],
+            "event_datetime": [event_time] * 5,
+            "section": ["Orchestra", "Balcony", "Floor", "VIP", "Upper Deck"],
+            "row": ["A", "B", "C", "D", "E"],
+            "seat_from": ["1", "5", "10", "1", "20"],
+            "seat_to": ["2", "6", "12", "2", "22"],
+            "quantity": [2, 2, 3, 2, 3],
+            "listing_price": [150.0, 75.0, 200.0, 500.0, 50.0],
+            "total_price": [180.0, 90.0, 240.0, 600.0, 60.0],
+            "face_value": [100.0, 50.0, 150.0, 400.0, 30.0],
+            "days_to_event": [30, 30, 30, 30, 30],
+            "artist_or_team": [
+                "Taylor Swift",
+                "Taylor Swift",
+                "Bruno Mars",
+                "Bruno Mars",
+                "Ed Sheeran",
+            ],
+            "venue_name": [
+                "Madison Square Garden",
+                "Madison Square Garden",
+                "Staples Center",
+                "Staples Center",
+                "Red Rocks",
+            ],
+            "city": ["New York", "NYC", "Los Angeles", "LA", "Denver"],
+        }
+    )
 
 
 @pytest.fixture
@@ -75,16 +86,18 @@ def sample_events_df() -> pd.DataFrame:
     now = datetime.now(UTC)
     event_time = now + timedelta(days=30)
 
-    return pd.DataFrame({
-        "event_id": ["E1", "E2", "E3"],
-        "event_type": ["concert", "concert", "concert"],
-        "event_datetime": [event_time] * 3,
-        "artist_or_team": ["Taylor Swift", "Bruno Mars", "Ed Sheeran"],
-        "venue_id": ["V1", "V2", "V3"],
-        "venue_name": ["Madison Square Garden", "Staples Center", "Red Rocks"],
-        "city": ["New York", "Los Angeles", "Denver"],
-        "venue_capacity": [20000, 19000, 9500],
-    })
+    return pd.DataFrame(
+        {
+            "event_id": ["E1", "E2", "E3"],
+            "event_type": ["concert", "concert", "concert"],
+            "event_datetime": [event_time] * 3,
+            "artist_or_team": ["Taylor Swift", "Bruno Mars", "Ed Sheeran"],
+            "venue_id": ["V1", "V2", "V3"],
+            "venue_name": ["Madison Square Garden", "Staples Center", "Red Rocks"],
+            "city": ["New York", "Los Angeles", "Denver"],
+            "venue_capacity": [20000, 19000, 9500],
+        }
+    )
 
 
 @pytest.fixture
@@ -92,17 +105,23 @@ def sample_snapshots_df() -> pd.DataFrame:
     """Generate sample price snapshots for testing."""
     now = datetime.now(UTC)
 
-    return pd.DataFrame({
-        "event_id": ["E1", "E1", "E2", "E2"],
-        "seat_zone": [SeatZone.FLOOR_VIP.value, SeatZone.LOWER_TIER.value,
-                      SeatZone.BALCONY.value, SeatZone.UPPER_TIER.value],
-        "timestamp": [now] * 4,
-        "price_min": [100.0, 50.0, 400.0, 30.0],
-        "price_avg": [150.0, 75.0, 500.0, 50.0],
-        "price_max": [200.0, 100.0, 600.0, 70.0],
-        "days_to_event": [30, 30, 30, 30],
-        "inventory_remaining": [50, 100, 20, 200],
-    })
+    return pd.DataFrame(
+        {
+            "event_id": ["E1", "E1", "E2", "E2"],
+            "seat_zone": [
+                SeatZone.FLOOR_VIP.value,
+                SeatZone.LOWER_TIER.value,
+                SeatZone.BALCONY.value,
+                SeatZone.UPPER_TIER.value,
+            ],
+            "timestamp": [now] * 4,
+            "price_min": [100.0, 50.0, 400.0, 30.0],
+            "price_avg": [150.0, 75.0, 500.0, 50.0],
+            "price_max": [200.0, 100.0, 600.0, 70.0],
+            "days_to_event": [30, 30, 30, 30],
+            "inventory_remaining": [50, 100, 20, 200],
+        }
+    )
 
 
 @pytest.fixture
@@ -114,11 +133,13 @@ def empty_df() -> pd.DataFrame:
 @pytest.fixture
 def all_nulls_df() -> pd.DataFrame:
     """DataFrame with all null values."""
-    return pd.DataFrame({
-        "listing_price": [None, None, None],
-        "section": [None, None, None],
-        "timestamp": [None, None, None],
-    })
+    return pd.DataFrame(
+        {
+            "listing_price": [None, None, None],
+            "section": [None, None, None],
+            "timestamp": [None, None, None],
+        }
+    )
 
 
 @pytest.fixture
@@ -127,18 +148,20 @@ def extreme_values_df() -> pd.DataFrame:
     now = datetime.now(UTC)
     event_time = now + timedelta(days=30)
 
-    return pd.DataFrame({
-        "listing_id": ["L1", "L2", "L3", "L4"],
-        "event_id": ["E1"] * 4,
-        "timestamp": [now] * 4,
-        "event_datetime": [event_time] * 4,
-        "section": ["Orchestra"] * 4,
-        "row": ["A"] * 4,
-        "quantity": [1, 1, 1, 1],
-        "listing_price": [0.50, 1000000.0, 150.0, -5.0],  # Extreme values
-        "total_price": [0.60, 1200000.0, 180.0, -6.0],
-        "days_to_event": [30] * 4,
-    })
+    return pd.DataFrame(
+        {
+            "listing_id": ["L1", "L2", "L3", "L4"],
+            "event_id": ["E1"] * 4,
+            "timestamp": [now] * 4,
+            "event_datetime": [event_time] * 4,
+            "section": ["Orchestra"] * 4,
+            "row": ["A"] * 4,
+            "quantity": [1, 1, 1, 1],
+            "listing_price": [0.50, 1000000.0, 150.0, -5.0],  # Extreme values
+            "total_price": [0.60, 1200000.0, 180.0, -6.0],
+            "days_to_event": [30] * 4,
+        }
+    )
 
 
 # ============================================================================
@@ -271,14 +294,16 @@ class TestDuplicateHandler:
     def test_detects_exact_duplicates(self):
         """Test detection of exact duplicate listings."""
         now = datetime.now(UTC)
-        df = pd.DataFrame({
-            "event_id": ["E1", "E1", "E1"],
-            "section": ["A", "A", "B"],
-            "row": ["1", "1", "1"],
-            "seat_from": ["5", "5", "5"],
-            "seat_to": ["6", "6", "6"],
-            "timestamp": [now, now + timedelta(minutes=30), now],
-        })
+        df = pd.DataFrame(
+            {
+                "event_id": ["E1", "E1", "E1"],
+                "section": ["A", "A", "B"],
+                "row": ["1", "1", "1"],
+                "seat_from": ["5", "5", "5"],
+                "seat_to": ["6", "6", "6"],
+                "timestamp": [now, now + timedelta(minutes=30), now],
+            }
+        )
 
         handler = DuplicateHandler(time_window_hours=6)
         result = handler.process(df)
@@ -290,14 +315,16 @@ class TestDuplicateHandler:
     def test_time_window_enforcement(self):
         """Test that time window is properly enforced."""
         now = datetime.now(UTC)
-        df = pd.DataFrame({
-            "event_id": ["E1", "E1"],
-            "section": ["A", "A"],
-            "row": ["1", "1"],
-            "seat_from": ["5", "5"],
-            "seat_to": ["6", "6"],
-            "timestamp": [now, now + timedelta(hours=7)],  # Outside 6-hour window
-        })
+        df = pd.DataFrame(
+            {
+                "event_id": ["E1", "E1"],
+                "section": ["A", "A"],
+                "row": ["1", "1"],
+                "seat_from": ["5", "5"],
+                "seat_to": ["6", "6"],
+                "timestamp": [now, now + timedelta(hours=7)],  # Outside 6-hour window
+            }
+        )
 
         handler = DuplicateHandler(time_window_hours=6)
         result = handler.process(df)
@@ -308,14 +335,16 @@ class TestDuplicateHandler:
     def test_keeps_first_occurrence(self):
         """Test that first occurrence is kept, later ones are flagged."""
         now = datetime.now(UTC)
-        df = pd.DataFrame({
-            "event_id": ["E1", "E1"],
-            "section": ["A", "A"],
-            "row": ["1", "1"],
-            "seat_from": ["5", "5"],
-            "seat_to": ["6", "6"],
-            "timestamp": [now, now + timedelta(minutes=30)],
-        })
+        df = pd.DataFrame(
+            {
+                "event_id": ["E1", "E1"],
+                "section": ["A", "A"],
+                "row": ["1", "1"],
+                "seat_from": ["5", "5"],
+                "seat_to": ["6", "6"],
+                "timestamp": [now, now + timedelta(minutes=30)],
+            }
+        )
 
         handler = DuplicateHandler(time_window_hours=6)
         result = handler.process(df)
@@ -369,18 +398,20 @@ class TestSchemaValidator:
 
     def test_validates_dtypes(self):
         """Test that column data types are validated."""
-        df = pd.DataFrame({
-            "listing_id": ["L1", "L2"],
-            "event_id": ["E1", "E2"],
-            "timestamp": ["not_a_datetime", "also_not"],  # Wrong type
-            "event_datetime": [datetime.now(UTC)] * 2,
-            "section": ["A", "B"],
-            "row": ["1", "2"],
-            "quantity": [1, 2],
-            "listing_price": [100.0, 200.0],
-            "total_price": [120.0, 240.0],
-            "days_to_event": [30, 30],
-        })
+        df = pd.DataFrame(
+            {
+                "listing_id": ["L1", "L2"],
+                "event_id": ["E1", "E2"],
+                "timestamp": ["not_a_datetime", "also_not"],  # Wrong type
+                "event_datetime": [datetime.now(UTC)] * 2,
+                "section": ["A", "B"],
+                "row": ["1", "2"],
+                "quantity": [1, 2],
+                "listing_price": [100.0, 200.0],
+                "total_price": [120.0, 240.0],
+                "days_to_event": [30, 30],
+            }
+        )
 
         validator = SchemaValidator("listings")
         result = validator.process(df)
@@ -390,18 +421,20 @@ class TestSchemaValidator:
 
     def test_detects_high_null_rate(self):
         """Test detection of columns with high null rates."""
-        df = pd.DataFrame({
-            "listing_id": ["L1", "L2", "L3", "L4", "L5"],
-            "event_id": ["E1", "E2", "E3", "E4", "E5"],
-            "timestamp": [datetime.now(UTC)] * 5,
-            "event_datetime": [datetime.now(UTC)] * 5,
-            "section": [None, None, None, "A", None],  # 80% null
-            "row": ["1", "2", "3", "4", "5"],
-            "quantity": [1, 2, 3, 4, 5],
-            "listing_price": [100.0, 200.0, 300.0, 400.0, 500.0],
-            "total_price": [120.0, 240.0, 360.0, 480.0, 600.0],
-            "days_to_event": [30] * 5,
-        })
+        df = pd.DataFrame(
+            {
+                "listing_id": ["L1", "L2", "L3", "L4", "L5"],
+                "event_id": ["E1", "E2", "E3", "E4", "E5"],
+                "timestamp": [datetime.now(UTC)] * 5,
+                "event_datetime": [datetime.now(UTC)] * 5,
+                "section": [None, None, None, "A", None],  # 80% null
+                "row": ["1", "2", "3", "4", "5"],
+                "quantity": [1, 2, 3, 4, 5],
+                "listing_price": [100.0, 200.0, 300.0, 400.0, 500.0],
+                "total_price": [120.0, 240.0, 360.0, 480.0, 600.0],
+                "days_to_event": [30] * 5,
+            }
+        )
 
         validator = SchemaValidator("listings")
         result = validator.process(df)
@@ -431,13 +464,15 @@ class TestReferentialValidator:
 
     def test_detects_invalid_seat_zones(self):
         """Test detection of invalid seat zone values."""
-        df = pd.DataFrame({
-            "event_id": ["E1", "E2"],
-            "seat_zone": ["INVALID_ZONE", "FLOOR"],
-            "timestamp": [datetime.now(UTC)] * 2,
-            "price_min": [100.0, 200.0],
-            "days_to_event": [30, 30],
-        })
+        df = pd.DataFrame(
+            {
+                "event_id": ["E1", "E2"],
+                "seat_zone": ["INVALID_ZONE", "FLOOR"],
+                "timestamp": [datetime.now(UTC)] * 2,
+                "price_min": [100.0, 200.0],
+                "days_to_event": [30, 30],
+            }
+        )
 
         validator = ReferentialValidator("snapshots")
         result = validator.process(df)
@@ -455,11 +490,13 @@ class TestReferentialValidator:
 
     def test_detects_invalid_event_references(self, sample_events_df):
         """Test detection of invalid event_id references."""
-        df = pd.DataFrame({
-            "event_id": ["E1", "E999"],  # E999 doesn't exist
-            "section": ["A", "B"],
-            "timestamp": [datetime.now(UTC)] * 2,
-        })
+        df = pd.DataFrame(
+            {
+                "event_id": ["E1", "E999"],  # E999 doesn't exist
+                "section": ["A", "B"],
+                "timestamp": [datetime.now(UTC)] * 2,
+            }
+        )
 
         validator = ReferentialValidator("listings", events_df=sample_events_df)
         result = validator.process(df)
@@ -474,11 +511,13 @@ class TestTemporalValidator:
     def test_detects_future_timestamps(self):
         """Test detection of timestamps in the future."""
         future = datetime.now(UTC) + timedelta(days=1)
-        df = pd.DataFrame({
-            "timestamp": [future],
-            "event_datetime": [future + timedelta(days=30)],
-            "days_to_event": [30],
-        })
+        df = pd.DataFrame(
+            {
+                "timestamp": [future],
+                "event_datetime": [future + timedelta(days=30)],
+                "days_to_event": [30],
+            }
+        )
 
         validator = TemporalValidator()
         result = validator.process(df)
@@ -489,11 +528,13 @@ class TestTemporalValidator:
     def test_detects_past_events(self):
         """Test detection of events that already occurred."""
         past = datetime.now(UTC) - timedelta(days=1)
-        df = pd.DataFrame({
-            "timestamp": [datetime.now(UTC)],
-            "event_datetime": [past],
-            "days_to_event": [-1],
-        })
+        df = pd.DataFrame(
+            {
+                "timestamp": [datetime.now(UTC)],
+                "event_datetime": [past],
+                "days_to_event": [-1],
+            }
+        )
 
         validator = TemporalValidator(allow_past_events=False)
         result = validator.process(df)
@@ -504,11 +545,13 @@ class TestTemporalValidator:
     def test_allows_past_events_when_configured(self):
         """Test that past events can be allowed."""
         past = datetime.now(UTC) - timedelta(days=1)
-        df = pd.DataFrame({
-            "timestamp": [datetime.now(UTC)],
-            "event_datetime": [past],
-            "days_to_event": [-1],
-        })
+        df = pd.DataFrame(
+            {
+                "timestamp": [datetime.now(UTC)],
+                "event_datetime": [past],
+                "days_to_event": [-1],
+            }
+        )
 
         validator = TemporalValidator(allow_past_events=True)
         result = validator.process(df)
@@ -521,11 +564,13 @@ class TestTemporalValidator:
         now = datetime.now(UTC)
         event_time = now + timedelta(days=30)
 
-        df = pd.DataFrame({
-            "timestamp": [now],
-            "event_datetime": [event_time],
-            "days_to_event": [100],  # Incorrect (should be ~30)
-        })
+        df = pd.DataFrame(
+            {
+                "timestamp": [now],
+                "event_datetime": [event_time],
+                "days_to_event": [100],  # Incorrect (should be ~30)
+            }
+        )
 
         validator = TemporalValidator()
         result = validator.process(df)
@@ -554,10 +599,12 @@ class TestEventMetadataJoiner:
 
     def test_handles_missing_event_ids(self, sample_events_df):
         """Test handling of listings with no matching event."""
-        df = pd.DataFrame({
-            "event_id": ["E1", "E999"],  # E999 doesn't exist
-            "listing_price": [100.0, 200.0],
-        })
+        df = pd.DataFrame(
+            {
+                "event_id": ["E1", "E999"],  # E999 doesn't exist
+                "listing_price": [100.0, 200.0],
+            }
+        )
 
         joiner = EventMetadataJoiner(sample_events_df)
         result = joiner.process(df)
@@ -578,10 +625,12 @@ class TestMissingValueImputer:
 
     def test_imputes_venue_capacity(self):
         """Test imputation of missing venue_capacity."""
-        df = pd.DataFrame({
-            "venue_capacity": [20000.0, None, 15000.0, None],
-            "city": ["New York", "New York", "Boston", "Boston"],
-        })
+        df = pd.DataFrame(
+            {
+                "venue_capacity": [20000.0, None, 15000.0, None],
+                "city": ["New York", "New York", "Boston", "Boston"],
+            }
+        )
 
         config = PreprocessingConfig(venue_capacity_default=15000)
         imputer = MissingValueImputer(config)
@@ -594,10 +643,12 @@ class TestMissingValueImputer:
 
     def test_uses_city_median_for_venue_capacity(self):
         """Test that city-level median is used when available."""
-        df = pd.DataFrame({
-            "venue_capacity": [20000.0, None, 18000.0],
-            "city": ["New York", "New York", "New York"],
-        })
+        df = pd.DataFrame(
+            {
+                "venue_capacity": [20000.0, None, 18000.0],
+                "city": ["New York", "New York", "New York"],
+            }
+        )
 
         imputer = MissingValueImputer()
         result = imputer.process(df)
@@ -607,10 +658,12 @@ class TestMissingValueImputer:
 
     def test_imputes_face_value(self):
         """Test imputation of missing face_value."""
-        df = pd.DataFrame({
-            "face_value": [100.0, None, 200.0],
-            "listing_price": [150.0, 200.0, 300.0],
-        })
+        df = pd.DataFrame(
+            {
+                "face_value": [100.0, None, 200.0],
+                "listing_price": [150.0, 200.0, 300.0],
+            }
+        )
 
         imputer = MissingValueImputer()
         result = imputer.process(df)
@@ -621,18 +674,20 @@ class TestMissingValueImputer:
 
     def test_tracks_imputed_flags(self):
         """Test that imputed columns are flagged."""
-        df = pd.DataFrame({
-            "venue_capacity": [20000.0, None],
-            "face_value": [100.0, None],
-            "listing_price": [150.0, 200.0],
-        })
+        df = pd.DataFrame(
+            {
+                "venue_capacity": [20000.0, None],
+                "face_value": [100.0, None],
+                "listing_price": [150.0, 200.0],
+            }
+        )
 
         imputer = MissingValueImputer()
         result = imputer.process(df)
 
-        assert result.data.iloc[0]["venue_capacity_imputed"] == False
-        assert result.data.iloc[1]["venue_capacity_imputed"] == True
-        assert result.data.iloc[1]["face_value_imputed"] == True
+        assert not result.data.iloc[0]["venue_capacity_imputed"]
+        assert result.data.iloc[1]["venue_capacity_imputed"]
+        assert result.data.iloc[1]["face_value_imputed"]
 
 
 class TestTypeConverter:
@@ -640,10 +695,12 @@ class TestTypeConverter:
 
     def test_converts_datetime_columns(self):
         """Test conversion of datetime columns."""
-        df = pd.DataFrame({
-            "timestamp": ["2024-01-01 12:00:00", "2024-01-02 13:00:00"],
-            "event_datetime": ["2024-02-01 19:00:00", "2024-02-02 20:00:00"],
-        })
+        df = pd.DataFrame(
+            {
+                "timestamp": ["2024-01-01 12:00:00", "2024-01-02 13:00:00"],
+                "event_datetime": ["2024-02-01 19:00:00", "2024-02-02 20:00:00"],
+            }
+        )
 
         converter = TypeConverter()
         result = converter.process(df)
@@ -653,9 +710,11 @@ class TestTypeConverter:
 
     def test_ensures_utc_timezone(self):
         """Test that datetime columns are timezone-aware UTC."""
-        df = pd.DataFrame({
-            "timestamp": pd.to_datetime(["2024-01-01 12:00:00"]),
-        })
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.to_datetime(["2024-01-01 12:00:00"]),
+            }
+        )
 
         converter = TypeConverter()
         result = converter.process(df)
@@ -665,10 +724,12 @@ class TestTypeConverter:
 
     def test_converts_price_columns(self):
         """Test conversion of price columns to float64."""
-        df = pd.DataFrame({
-            "listing_price": [100, 200, 300],  # Integers
-            "face_value": ["150.50", "250.75", "350.25"],  # Strings
-        })
+        df = pd.DataFrame(
+            {
+                "listing_price": [100, 200, 300],  # Integers
+                "face_value": ["150.50", "250.75", "350.25"],  # Strings
+            }
+        )
 
         converter = TypeConverter()
         result = converter.process(df)
@@ -678,10 +739,12 @@ class TestTypeConverter:
 
     def test_converts_categorical_columns(self):
         """Test conversion of categorical columns."""
-        df = pd.DataFrame({
-            "seat_zone": ["FLOOR", "LOWER_TIER", "FLOOR"],
-            "event_type": ["concert", "sports", "concert"],
-        })
+        df = pd.DataFrame(
+            {
+                "seat_zone": ["FLOOR", "LOWER_TIER", "FLOOR"],
+                "event_type": ["concert", "sports", "concert"],
+            }
+        )
 
         converter = TypeConverter()
         result = converter.process(df)
@@ -703,9 +766,7 @@ class TestSeatZoneEnricher:
 
     def test_maps_sections_to_zones(self):
         """Test that sections are correctly mapped to seat zones."""
-        df = pd.DataFrame({
-            "section": ["Orchestra", "Floor", "Balcony", "Upper Level", "VIP"]
-        })
+        df = pd.DataFrame({"section": ["Orchestra", "Floor", "Balcony", "Upper Level", "VIP"]})
 
         enricher = SeatZoneEnricher()
         result = enricher.process(df)
@@ -713,7 +774,9 @@ class TestSeatZoneEnricher:
         # Check specific mappings
         zones = result.data["normalized_seat_zone"].tolist()
         assert SeatZone.LOWER_TIER in zones  # Orchestra
-        assert SeatZone.FLOOR_VIP in zones or SeatZone.LOWER_TIER in zones  # Floor (can map to either)
+        assert (
+            SeatZone.FLOOR_VIP in zones or SeatZone.LOWER_TIER in zones
+        )  # Floor (can map to either)
         assert SeatZone.UPPER_TIER in zones or SeatZone.BALCONY in zones  # Upper Level or Balcony
         # At least we got valid zones for all sections
         assert len(zones) == 5
@@ -721,9 +784,7 @@ class TestSeatZoneEnricher:
 
     def test_handles_missing_sections(self):
         """Test handling of null/empty sections."""
-        df = pd.DataFrame({
-            "section": ["Floor", None, "", "VIP"]
-        })
+        df = pd.DataFrame({"section": ["Floor", None, "", "VIP"]})
 
         enricher = SeatZoneEnricher()
         result = enricher.process(df)
@@ -739,9 +800,13 @@ class TestTemporalFeatureEnricher:
 
     def test_adds_hour_of_day(self):
         """Test that hour_of_day is extracted from timestamp."""
-        df = pd.DataFrame({
-            "timestamp": pd.to_datetime(["2024-01-01 14:30:00", "2024-01-01 09:15:00"]).tz_localize("UTC"),
-        })
+        df = pd.DataFrame(
+            {
+                "timestamp": pd.to_datetime(
+                    ["2024-01-01 14:30:00", "2024-01-01 09:15:00"]
+                ).tz_localize("UTC"),
+            }
+        )
 
         enricher = TemporalFeatureEnricher()
         result = enricher.process(df)
@@ -755,10 +820,12 @@ class TestTemporalFeatureEnricher:
         now = datetime.now(UTC)
         event_time = now + timedelta(days=30)
 
-        df = pd.DataFrame({
-            "timestamp": [now],
-            "event_datetime": [event_time],
-        })
+        df = pd.DataFrame(
+            {
+                "timestamp": [now],
+                "event_datetime": [event_time],
+            }
+        )
 
         enricher = TemporalFeatureEnricher()
         result = enricher.process(df)
@@ -772,16 +839,18 @@ class TestTemporalFeatureEnricher:
         saturday = pd.Timestamp("2024-01-06 19:00:00", tz="UTC")  # Saturday
         monday = pd.Timestamp("2024-01-08 19:00:00", tz="UTC")  # Monday
 
-        df = pd.DataFrame({
-            "event_datetime": [saturday, monday],
-        })
+        df = pd.DataFrame(
+            {
+                "event_datetime": [saturday, monday],
+            }
+        )
 
         enricher = TemporalFeatureEnricher()
         result = enricher.process(df)
 
         assert "is_weekend" in result.data.columns
-        assert result.data.iloc[0]["is_weekend"] == True  # Saturday
-        assert result.data.iloc[1]["is_weekend"] == False  # Monday
+        assert result.data.iloc[0]["is_weekend"]  # Saturday
+        assert not result.data.iloc[1]["is_weekend"]  # Monday
 
 
 # ============================================================================
@@ -828,7 +897,7 @@ class TestPreprocessingPipeline:
         stages = [TextNormalizer(), TypeConverter()]
         pipeline = PreprocessingPipeline(stages, checkpoint_dir=tmp_path, name="test")
 
-        result = pipeline.process(sample_listings_df)
+        pipeline.process(sample_listings_df)
 
         # Check that checkpoint files were created
         checkpoint_files = list(tmp_path.glob("*.parquet"))
@@ -852,7 +921,7 @@ class TestPreprocessingPipeline:
         """Test that pipeline continues after stage failures."""
 
         class FailingPreprocessor:
-            def process(self, df):
+            def process(self, df):  # noqa: ARG002
                 raise ValueError("Intentional failure")
 
         stages = [
@@ -981,7 +1050,7 @@ class TestQualityReporter:
                 "input_rows": 10,
                 "dropped_rows": 2,
                 "outliers": {"price": 3},
-            }
+            },
         )
 
         reporter = QualityReporter()
@@ -1017,6 +1086,7 @@ class TestQualityReporter:
         json_str = reporter.generate_json_export(metrics)
 
         import json
+
         data = json.loads(json_str)
 
         assert "metrics" in data
@@ -1127,21 +1197,23 @@ class TestEdgeCases:
     def test_single_row_dataframe(self):
         """Test processing of single-row DataFrame."""
         now = datetime.now(UTC)
-        df = pd.DataFrame({
-            "listing_id": ["L1"],
-            "event_id": ["E1"],
-            "timestamp": [now],
-            "event_datetime": [now + timedelta(days=30)],
-            "section": ["Orchestra"],
-            "row": ["A"],
-            "quantity": [1],
-            "listing_price": [100.0],
-            "total_price": [120.0],
-            "days_to_event": [30],
-            "artist_or_team": ["Taylor Swift"],
-            "venue_name": ["MSG"],
-            "city": ["NYC"],
-        })
+        df = pd.DataFrame(
+            {
+                "listing_id": ["L1"],
+                "event_id": ["E1"],
+                "timestamp": [now],
+                "event_datetime": [now + timedelta(days=30)],
+                "section": ["Orchestra"],
+                "row": ["A"],
+                "quantity": [1],
+                "listing_price": [100.0],
+                "total_price": [120.0],
+                "days_to_event": [30],
+                "artist_or_team": ["Taylor Swift"],
+                "venue_name": ["MSG"],
+                "city": ["NYC"],
+            }
+        )
 
         pipeline = PipelineBuilder.build_listings_pipeline()
         result = pipeline.process(df)
@@ -1155,21 +1227,23 @@ class TestEdgeCases:
         event_time = now + timedelta(days=30)
 
         # Generate 1000 rows
-        df = pd.DataFrame({
-            "listing_id": [f"L{i}" for i in range(1000)],
-            "event_id": [f"E{i % 10}" for i in range(1000)],
-            "timestamp": [now] * 1000,
-            "event_datetime": [event_time] * 1000,
-            "section": ["Orchestra"] * 1000,
-            "row": ["A"] * 1000,
-            "quantity": [2] * 1000,
-            "listing_price": [100.0 + (i % 100) for i in range(1000)],
-            "total_price": [120.0 + (i % 100) for i in range(1000)],
-            "days_to_event": [30] * 1000,
-            "artist_or_team": ["Taylor Swift"] * 1000,
-            "venue_name": ["MSG"] * 1000,
-            "city": ["NYC"] * 1000,
-        })
+        df = pd.DataFrame(
+            {
+                "listing_id": [f"L{i}" for i in range(1000)],
+                "event_id": [f"E{i % 10}" for i in range(1000)],
+                "timestamp": [now] * 1000,
+                "event_datetime": [event_time] * 1000,
+                "section": ["Orchestra"] * 1000,
+                "row": ["A"] * 1000,
+                "quantity": [2] * 1000,
+                "listing_price": [100.0 + (i % 100) for i in range(1000)],
+                "total_price": [120.0 + (i % 100) for i in range(1000)],
+                "days_to_event": [30] * 1000,
+                "artist_or_team": ["Taylor Swift"] * 1000,
+                "venue_name": ["MSG"] * 1000,
+                "city": ["NYC"] * 1000,
+            }
+        )
 
         pipeline = PipelineBuilder.build_listings_pipeline()
         result = pipeline.process(df)

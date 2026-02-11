@@ -141,14 +141,12 @@ class PricePredictor:
         if predicted_price > baseline * _config.direction_up_threshold:
             direction = "UP"
             direction_prob = min(
-                _config.direction_max_probability,
-                0.5 + (predicted_price - baseline) / baseline
+                _config.direction_max_probability, 0.5 + (predicted_price - baseline) / baseline
             )
         elif predicted_price < baseline * _config.direction_down_threshold:
             direction = "DOWN"
             direction_prob = min(
-                _config.direction_max_probability,
-                0.5 + (baseline - predicted_price) / baseline
+                _config.direction_max_probability, 0.5 + (baseline - predicted_price) / baseline
             )
         else:
             direction = "STABLE"

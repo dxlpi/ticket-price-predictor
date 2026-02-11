@@ -97,8 +97,8 @@ class BaselineModel(PriceModel):
         self,
         X_train: pd.DataFrame,
         y_train: pd.Series,
-        X_val: pd.DataFrame | None = None,
-        y_val: pd.Series | None = None,
+        X_val: pd.DataFrame | None = None,  # noqa: ARG002
+        y_val: pd.Series | None = None,  # noqa: ARG002
     ) -> "BaselineModel":
         """Fit the model.
 
@@ -156,7 +156,7 @@ class BaselineModel(PriceModel):
         if not self._fitted or self._pipeline is None:
             raise RuntimeError("Model must be fitted before predicting")
 
-        return self._pipeline.predict(X)
+        return np.asarray(self._pipeline.predict(X))
 
     def get_feature_importance(self) -> dict[str, float]:
         """Get feature importance from Ridge coefficients.
@@ -177,7 +177,7 @@ class BaselineModel(PriceModel):
             feature_names = [f"feature_{i}" for i in range(len(ridge.coef_))]
 
         # Map to importance (absolute coefficient values)
-        importance = dict(zip(feature_names, np.abs(ridge.coef_)))
+        importance = dict(zip(feature_names, np.abs(ridge.coef_), strict=False))
 
         # Sort by importance
         return dict(sorted(importance.items(), key=lambda x: -x[1])[:20])

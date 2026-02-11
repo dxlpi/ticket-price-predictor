@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SpotifyMetrics:
     """Metrics from Spotify API."""
+
     spotify_id: str
     popularity: int  # 0-100
     followers: int

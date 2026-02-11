@@ -199,9 +199,9 @@ class ArtistStatsCache:
 
         # Top 5 artists by avg price
         if self._stats:
-            sorted_artists = sorted(
-                self._stats.values(), key=lambda x: x.avg_price, reverse=True
-            )[:5]
+            sorted_artists = sorted(self._stats.values(), key=lambda x: x.avg_price, reverse=True)[
+                :5
+            ]
             lines.append("Top artists by avg price:")
             for stats in sorted_artists:
                 lines.append(f"  {stats.artist_name}: ${stats.avg_price:.2f}")

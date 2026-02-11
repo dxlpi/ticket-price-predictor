@@ -12,17 +12,45 @@ class EventFeatureExtractor(FeatureExtractor):
     """Extract features related to events and locations."""
 
     # City tiers based on market size and ticket demand
-    TIER_1_CITIES = frozenset([
-        "new york", "los angeles", "chicago", "houston", "phoenix",
-        "philadelphia", "san antonio", "san diego", "dallas", "san jose",
-        "las vegas", "miami", "boston", "atlanta", "san francisco",
-    ])
+    TIER_1_CITIES = frozenset(
+        [
+            "new york",
+            "los angeles",
+            "chicago",
+            "houston",
+            "phoenix",
+            "philadelphia",
+            "san antonio",
+            "san diego",
+            "dallas",
+            "san jose",
+            "las vegas",
+            "miami",
+            "boston",
+            "atlanta",
+            "san francisco",
+        ]
+    )
 
-    TIER_2_CITIES = frozenset([
-        "seattle", "denver", "washington", "nashville", "austin",
-        "detroit", "portland", "charlotte", "orlando", "minneapolis",
-        "tampa", "pittsburgh", "st. louis", "baltimore", "salt lake city",
-    ])
+    TIER_2_CITIES = frozenset(
+        [
+            "seattle",
+            "denver",
+            "washington",
+            "nashville",
+            "austin",
+            "detroit",
+            "portland",
+            "charlotte",
+            "orlando",
+            "minneapolis",
+            "tampa",
+            "pittsburgh",
+            "st. louis",
+            "baltimore",
+            "salt lake city",
+        ]
+    )
 
     # Event type encoding
     EVENT_TYPE_MAP = {
@@ -84,9 +112,7 @@ class EventFeatureExtractor(FeatureExtractor):
 
         # Venue capacity bucket
         if "venue_capacity" in df.columns:
-            result["venue_capacity_bucket"] = df["venue_capacity"].apply(
-                self._capacity_bucket
-            )
+            result["venue_capacity_bucket"] = df["venue_capacity"].apply(self._capacity_bucket)
         else:
             result["venue_capacity_bucket"] = 2  # Medium default
 
@@ -103,7 +129,7 @@ class EventFeatureExtractor(FeatureExtractor):
 
     def _capacity_bucket(self, capacity: float | None) -> int:
         """Bucket venue capacity into categories (thresholds from config)."""
-        if pd.isna(capacity):
+        if capacity is None or pd.isna(capacity):
             return 2  # Unknown -> medium
         elif capacity < _config.venue_small_capacity:
             return 0  # Small/intimate

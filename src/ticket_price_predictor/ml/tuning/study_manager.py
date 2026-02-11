@@ -1,7 +1,6 @@
 """Optuna study management and persistence."""
 
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -91,13 +90,13 @@ class StudyManager:
             show_progress_bar=True,
         )
 
-        print(f"\nOptimization complete!")
+        print("\nOptimization complete!")
         print(f"  Best trial: {study.best_trial.number}")
         print(f"  Best MAE: ${study.best_value:.2f}")
 
         return study
 
-    def save_trial_metadata(self, trial: optuna.Trial) -> Path:
+    def save_trial_metadata(self, trial: optuna.trial.FrozenTrial) -> Path:
         """Save detailed trial metadata to JSON."""
 
         trial_dir = self.trials_dir / self.study_name
@@ -109,9 +108,7 @@ class StudyManager:
             "value": trial.value if trial.value else None,
             "params": trial.params,
             "user_attrs": trial.user_attrs,
-            "datetime_start": (
-                trial.datetime_start.isoformat() if trial.datetime_start else None
-            ),
+            "datetime_start": (trial.datetime_start.isoformat() if trial.datetime_start else None),
             "datetime_complete": (
                 trial.datetime_complete.isoformat() if trial.datetime_complete else None
             ),
@@ -133,7 +130,7 @@ class StudyManager:
         study = self.create_study()
         return study.best_trial.params
 
-    def get_top_k_trials(self, k: int = 5) -> list[optuna.Trial]:
+    def get_top_k_trials(self, k: int = 5) -> list[optuna.trial.FrozenTrial]:
         """Get top K trials by value."""
         study = self.create_study()
         return sorted(study.trials, key=lambda t: t.value if t.value else float("inf"))[:k]

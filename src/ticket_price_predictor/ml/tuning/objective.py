@@ -14,7 +14,7 @@ def create_objective(
     split: DataSplit,
     search_space: str = "aggressive",
     penalize_dominance: bool = True,
-):
+) -> Any:
     """Factory to create objective function with data closure.
 
     Args:
@@ -76,7 +76,7 @@ def create_objective(
                 objective_value += dominance_penalty
                 trial.set_user_attr("dominance_penalty", dominance_penalty)
 
-            return objective_value
+            return float(objective_value)
 
         except Exception as e:
             # Log error and return worst possible value
@@ -120,9 +120,7 @@ def _sample_aggressive(trial: optuna.Trial) -> dict[str, Any]:
         "feature_fraction": trial.suggest_float("feature_fraction", 0.4, 0.9),
         "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 0.9),
         "bagging_freq": trial.suggest_categorical("bagging_freq", [1, 5, 10]),
-        "min_child_samples": trial.suggest_categorical(
-            "min_child_samples", [5, 10, 20, 50, 100]
-        ),
+        "min_child_samples": trial.suggest_categorical("min_child_samples", [5, 10, 20, 50, 100]),
         "reg_alpha": trial.suggest_float("reg_alpha", 0.0, 10.0),
         "reg_lambda": trial.suggest_float("reg_lambda", 0.0, 10.0),
         "early_stopping_rounds": 50,

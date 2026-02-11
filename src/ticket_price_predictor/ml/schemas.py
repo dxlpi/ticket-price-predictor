@@ -62,9 +62,7 @@ class PricePrediction(BaseModel):
                 pa.field("predicted_direction", pa.string(), nullable=False),
                 pa.field("direction_probability", pa.float64(), nullable=False),
                 pa.field("model_version", pa.string(), nullable=False),
-                pa.field(
-                    "prediction_timestamp", pa.timestamp("us", tz="UTC"), nullable=False
-                ),
+                pa.field("prediction_timestamp", pa.timestamp("us", tz="UTC"), nullable=False),
             ]
         )
 

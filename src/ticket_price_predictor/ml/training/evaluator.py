@@ -154,4 +154,4 @@ class ModelEvaluator:
         if metrics.feature_importance:
             print("Top features:")
             for i, (name, imp) in enumerate(list(metrics.feature_importance.items())[:10]):
-                print(f"  {i+1}. {name}: {imp:.4f}")
+                print(f"  {i + 1}. {name}: {imp:.4f}")

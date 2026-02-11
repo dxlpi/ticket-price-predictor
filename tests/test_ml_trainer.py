@@ -1,7 +1,6 @@
 """Tests for ML training pipeline."""
 
 import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -11,7 +10,6 @@ from ticket_price_predictor.ml.schemas import TrainingMetrics
 from ticket_price_predictor.ml.training.evaluator import ModelEvaluator
 from ticket_price_predictor.ml.training.splitter import DataSplit, TimeBasedSplitter
 from ticket_price_predictor.ml.training.trainer import ModelTrainer
-
 
 # ============================================================================
 # TimeBasedSplitter Tests
@@ -61,10 +59,12 @@ class TestTimeBasedSplitter:
         splitter = TimeBasedSplitter()
 
         # Create data with timestamps
-        raw_df = pd.DataFrame({
-            "timestamp": pd.date_range("2024-01-01", periods=100, freq="D"),
-            "listing_price": np.random.rand(100) * 100 + 50,
-        })
+        raw_df = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2024-01-01", periods=100, freq="D"),
+                "listing_price": np.random.rand(100) * 100 + 50,
+            }
+        )
         X = pd.DataFrame({"f1": range(100)})
         y = raw_df["listing_price"]
 
@@ -185,18 +185,20 @@ class TestModelTrainer:
         np.random.seed(42)
         n = 200
 
-        return pd.DataFrame({
-            "artist_or_team": np.random.choice(["Artist A", "Artist B"], n),
-            "event_type": ["CONCERT"] * n,
-            "city": np.random.choice(["New York", "Los Angeles"], n),
-            "event_datetime": pd.date_range("2024-01-01", periods=n, freq="6H"),
-            "section": np.random.choice(["Floor", "Lower Level", "Upper Level"], n),
-            "row": np.random.choice(["1", "5", "10", "20"], n),
-            "days_to_event": np.random.randint(1, 60, n),
-            "listing_price": 100 + np.random.randn(n) * 30,
-            "event_id": [f"e{i % 20}" for i in range(n)],
-            "timestamp": pd.date_range("2024-01-01", periods=n, freq="6H"),
-        })
+        return pd.DataFrame(
+            {
+                "artist_or_team": np.random.choice(["Artist A", "Artist B"], n),
+                "event_type": ["CONCERT"] * n,
+                "city": np.random.choice(["New York", "Los Angeles"], n),
+                "event_datetime": pd.date_range("2024-01-01", periods=n, freq="6H"),
+                "section": np.random.choice(["Floor", "Lower Level", "Upper Level"], n),
+                "row": np.random.choice(["1", "5", "10", "20"], n),
+                "days_to_event": np.random.randint(1, 60, n),
+                "listing_price": 100 + np.random.randn(n) * 30,
+                "event_id": [f"e{i % 20}" for i in range(n)],
+                "timestamp": pd.date_range("2024-01-01", periods=n, freq="6H"),
+            }
+        )
 
     def test_initialization(self):
         """Test trainer initialization."""
@@ -270,18 +272,21 @@ class TestModelTrainer:
 
         assert loaded is not None
         # Should be able to predict
-        X_test = pd.DataFrame({
-            "artist_or_team": ["Artist A"],
-            "event_type": ["CONCERT"],
-            "city": ["New York"],
-            "event_datetime": pd.to_datetime(["2024-06-15"]),
-            "section": ["Floor"],
-            "row": ["1"],
-            "days_to_event": [14],
-            "listing_price": [100.0],
-            "event_id": ["e1"],
-        })
+        X_test = pd.DataFrame(
+            {
+                "artist_or_team": ["Artist A"],
+                "event_type": ["CONCERT"],
+                "city": ["New York"],
+                "event_datetime": pd.to_datetime(["2024-06-15"]),
+                "section": ["Floor"],
+                "row": ["1"],
+                "days_to_event": [14],
+                "listing_price": [100.0],
+                "event_id": ["e1"],
+            }
+        )
         from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
+
         pipeline = FeaturePipeline(include_momentum=True)
         features = pipeline.fit_transform(X_test)
         preds = loaded.predict(features)
@@ -405,18 +410,20 @@ class TestTrainingIntegration:
         for i in range(n):
             artist = np.random.choice(artists)
             base_price = artist_prices[artist]
-            data.append({
-                "artist_or_team": artist,
-                "event_type": "CONCERT",
-                "city": np.random.choice(["New York", "Seattle", "Austin"]),
-                "event_datetime": pd.Timestamp("2024-01-01") + pd.Timedelta(days=i // 3),
-                "section": np.random.choice(["Floor", "Lower Level", "Upper Level"]),
-                "row": str(np.random.randint(1, 30)),
-                "days_to_event": np.random.randint(1, 60),
-                "listing_price": base_price + np.random.randn() * 30,
-                "event_id": f"e{i % 30}",
-                "timestamp": pd.Timestamp("2024-01-01") + pd.Timedelta(hours=i * 2),
-            })
+            data.append(
+                {
+                    "artist_or_team": artist,
+                    "event_type": "CONCERT",
+                    "city": np.random.choice(["New York", "Seattle", "Austin"]),
+                    "event_datetime": pd.Timestamp("2024-01-01") + pd.Timedelta(days=i // 3),
+                    "section": np.random.choice(["Floor", "Lower Level", "Upper Level"]),
+                    "row": str(np.random.randint(1, 30)),
+                    "days_to_event": np.random.randint(1, 60),
+                    "listing_price": base_price + np.random.randn() * 30,
+                    "event_id": f"e{i % 30}",
+                    "timestamp": pd.Timestamp("2024-01-01") + pd.Timedelta(hours=i * 2),
+                }
+            )
 
         return pd.DataFrame(data)
 
@@ -440,19 +447,24 @@ class TestTrainingIntegration:
 
         # Create test input
         from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
+
         pipeline = FeaturePipeline(include_momentum=True)
 
-        test_input = pd.DataFrame([{
-            "artist_or_team": "Taylor Swift",
-            "event_type": "CONCERT",
-            "city": "New York",
-            "event_datetime": pd.Timestamp("2024-06-15"),
-            "section": "Floor",
-            "row": "5",
-            "days_to_event": 14,
-            "listing_price": 200.0,
-            "event_id": "test_event",
-        }])
+        test_input = pd.DataFrame(
+            [
+                {
+                    "artist_or_team": "Taylor Swift",
+                    "event_type": "CONCERT",
+                    "city": "New York",
+                    "event_datetime": pd.Timestamp("2024-06-15"),
+                    "section": "Floor",
+                    "row": "5",
+                    "days_to_event": 14,
+                    "listing_price": 200.0,
+                    "event_id": "test_event",
+                }
+            ]
+        )
 
         features = pipeline.fit_transform(test_input)
         pred = loaded_model.predict(features)

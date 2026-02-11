@@ -240,7 +240,11 @@ class VividSeatsScraper:
         # Check for redirects (VividSeats redirects expired events to random pages)
         final_url = self._page.url
         # Extract production ID from original URL
-        original_prod_id = event_url.split("/production/")[-1].split("/")[0] if "/production/" in event_url else None
+        original_prod_id = (
+            event_url.split("/production/")[-1].split("/")[0]
+            if "/production/" in event_url
+            else None
+        )
         if original_prod_id and f"/production/{original_prod_id}" not in final_url:
             logger.warning(f"URL redirected from {event_url} to {final_url} - event may be expired")
             self._page.remove_listener("response", capture_listings)
@@ -248,9 +252,10 @@ class VividSeatsScraper:
 
         # Wait for listings API specifically (this is the key wait)
         try:
-            await self._page.wait_for_response(
-                lambda r: "/hermes/api/v1/listings" in r.url and "productionId" in r.url,
-                timeout=25000
+            await self._page.wait_for_event(
+                "response",
+                predicate=lambda r: "/hermes/api/v1/listings" in r.url and "productionId" in r.url,
+                timeout=25000,
             )
         except Exception:
             # API call may have already happened or may not exist
@@ -282,7 +287,9 @@ class VividSeatsScraper:
             return []
 
         listings = self._extract_listings(listings_data, max_listings)
-        logger.info(f"Captured {len(listings)} listings via {'API' if via_api else '__NEXT_DATA__'}")
+        logger.info(
+            f"Captured {len(listings)} listings via {'API' if via_api else '__NEXT_DATA__'}"
+        )
         return listings
 
     async def _extract_from_next_data(self) -> dict[str, Any] | None:
@@ -301,7 +308,7 @@ class VividSeatsScraper:
 
             # Check if listings are embedded in page props
             if "initialListingsData" in page_props:
-                return page_props["initialListingsData"]
+                return page_props["initialListingsData"]  # type: ignore[no-any-return]
 
             # Alternative: check for tickets directly
             if "tickets" in page_props:

@@ -52,7 +52,9 @@ class EventMetadataJoiner(Preprocessor):
         # Track missing event IDs
         missing_event_ids = result_df["venue_capacity"].isna().sum()
         if missing_event_ids > 0:
-            issues.append(f"{missing_event_ids} listings have no matching event_id in EventMetadata")
+            issues.append(
+                f"{missing_event_ids} listings have no matching event_id in EventMetadata"
+            )
 
         metrics["rows_joined"] = len(result_df)
         metrics["missing_event_ids_count"] = int(missing_event_ids)
@@ -254,7 +256,9 @@ class SeatZoneEnricher(Preprocessor):
         metrics["unmappable_count"] = unmappable_count
 
         if unmappable_count > 0:
-            issues.append(f"{unmappable_count} sections could not be mapped (defaulted to UPPER_TIER)")
+            issues.append(
+                f"{unmappable_count} sections could not be mapped (defaulted to UPPER_TIER)"
+            )
 
         return ProcessingResult(data=result_df, issues=issues, metrics=metrics)
 

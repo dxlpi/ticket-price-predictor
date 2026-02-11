@@ -1,6 +1,7 @@
 """Time-based data splitting to avoid data leakage."""
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -129,7 +130,7 @@ class GroupKFoldSplitter:
         X: pd.DataFrame,
         y: pd.Series,
         groups: pd.Series,
-    ):
+    ) -> Any:
         """Generate train/test indices for each fold.
 
         Args:
@@ -144,5 +145,4 @@ class GroupKFoldSplitter:
 
         gkf = GroupKFold(n_splits=self._n_splits)
 
-        for train_idx, test_idx in gkf.split(X, y, groups):
-            yield train_idx, test_idx
+        yield from gkf.split(X, y, groups)

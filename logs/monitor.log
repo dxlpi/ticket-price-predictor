@@ -6876,3 +6876,371 @@ Total events being monitored: 41
 Total listings in database: 11695
 
 Completed at: 2026-02-09T16:55:15.923120
+PopularityService initialized with no API sources configured
+============================================================
+POPULAR EVENTS MONITOR
+============================================================
+Timestamp: 2026-02-09T17:55:16.954399
+Max events: 30
+Max listings per event: 100
+
+Fetching popular performers and their events...
+  Using popularity-ranked selection: 15 performers
+  Bruno Mars: 1 events, added 1
+  Lady Gaga: 1 events, added 1
+  Morgan Wallen: 1 events, added 1
+  BTS: 1 events, added 1
+  Taylor Swift: 0 events, added 0
+  Beyonce: 0 events, added 0
+  The Eagles: 1 events, added 1
+  Chris Stapleton: 1 events, added 1
+  Ariana Grande: 1 events, added 1
+  Harry Styles: 1 events, added 1
+  Backstreet Boys: 1 events, added 1
+  George Strait: 1 events, added 1
+  Megan Moroney: 1 events, added 1
+  Olivia Dean: 1 events, added 1
+  Rush: 1 events, added 1
+
+Found 13 popular events to monitor:
+   1. [Bruno Mars] Bruno Mars - $169.1 (3013 tix)
+   2. [Lady Gaga] Lady Gaga - $217.55 (645 tix)
+   3. [Morgan Wallen] Morgan Wallen - $76.95 (4916 tix)
+   4. [BTS] BTS - $129.2 (4966 tix)
+   5. [The Eagles] The Eagles - $375.25 (887 tix)
+   6. [Chris Stapleton] Chris Stapleton - $131.1 (434 tix)
+   7. [Ariana Grande] Ariana Grande - $596.82 (266 tix)
+   8. [Harry Styles] Harry Styles - $137.75 (807 tix)
+   9. [Backstreet Boys] Backstreet Boys - $384.75 (401 tix)
+  10. [George Strait] George Strait - $144.4 (2607 tix)
+  11. [Megan Moroney] Houston Rodeo - Megan Moroney - $39.9 (10374 tix)
+  12. [Olivia Dean] Olivia Dean - $277.34 (42 tix)
+  13. [Rush] Rush - $147.25 (893 tix)
+
+============================================================
+COLLECTING LISTINGS
+============================================================
+
+[1/13] Bruno Mars...
+    Collected 99 new listings (from 100 found)
+
+[2/13] Lady Gaga...
+    Collected 100 new listings (from 100 found)
+
+[3/13] Morgan Wallen...
+    Collected 97 new listings (from 100 found)
+
+[4/13] BTS...
+    Collected 99 new listings (from 100 found)
+
+[5/13] The Eagles...
+    Collected 85 new listings (from 100 found)
+
+[6/13] Chris Stapleton...
+    Collected 100 new listings (from 100 found)
+
+[7/13] Ariana Grande...
+    Collected 87 new listings (from 87 found)
+
+[8/13] Harry Styles...
+    Collected 86 new listings (from 100 found)
+
+[9/13] Backstreet Boys...
+    Collected 93 new listings (from 100 found)
+
+[10/13] George Strait...
+    Collected 87 new listings (from 100 found)
+
+[11/13] Houston Rodeo - Megan Moroney...
+    Collected 98 new listings (from 100 found)
+
+[12/13] Olivia Dean...
+    Collected 11 new listings (from 14 found)
+
+[13/13] Rush...
+    Collected 100 new listings (from 100 found)
+
+============================================================
+COLLECTION SUMMARY
+============================================================
+Events attempted: 13
+Events succeeded: 13
+Total listings collected: 1142
+
+============================================================
+CURRENT DATA STATS
+============================================================
+Total events being monitored: 41
+Total listings in database: 12837
+
+Completed at: 2026-02-09T17:59:39.351744
+PopularityService initialized with no API sources configured
+============================================================
+POPULAR EVENTS MONITOR
+============================================================
+Timestamp: 2026-02-09T22:24:25.177700
+Max events: 30
+Max listings per event: 100
+
+Fetching popular performers and their events...
+  Using popularity-ranked selection: 15 performers
+  Error fetching Bruno Mars: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Bruno+Mars
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Bruno+Mars", waiting until "load"
+
+  Error fetching Lady Gaga: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Lady+Gaga
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Lady+Gaga", waiting until "load"
+
+  Error fetching Morgan Wallen: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Morgan+Wallen
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Morgan+Wallen", waiting until "load"
+
+  Error fetching BTS: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=BTS
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=BTS", waiting until "load"
+
+  Error fetching Taylor Swift: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Taylor+Swift
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Taylor+Swift", waiting until "load"
+
+  Error fetching Beyonce: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Beyonce
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Beyonce", waiting until "load"
+
+  Error fetching The Eagles: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=The+Eagles
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=The+Eagles", waiting until "load"
+
+  Error fetching Chris Stapleton: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Chris+Stapleton
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Chris+Stapleton", waiting until "load"
+
+  Error fetching Ariana Grande: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Ariana+Grande
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Ariana+Grande", waiting until "load"
+
+  Error fetching Harry Styles: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Harry+Styles
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Harry+Styles", waiting until "load"
+
+  Error fetching Backstreet Boys: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Backstreet+Boys
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Backstreet+Boys", waiting until "load"
+
+  Error fetching George Strait: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=George+Strait
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=George+Strait", waiting until "load"
+
+  Error fetching Megan Moroney: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Megan+Moroney
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Megan+Moroney", waiting until "load"
+
+  Error fetching Olivia Dean: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Olivia+Dean
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Olivia+Dean", waiting until "load"
+
+  Error fetching Rush: Page.goto: net::ERR_INTERNET_DISCONNECTED at https://www.vividseats.com/search?searchTerm=Rush
+Call log:
+  - navigating to "https://www.vividseats.com/search?searchTerm=Rush", waiting until "load"
+
+
+Found 0 popular events to monitor:
+
+No events found to monitor!
+PopularityService initialized with no API sources configured
+============================================================
+POPULAR EVENTS MONITOR
+============================================================
+Timestamp: 2026-02-11T20:01:59.774576
+Max events: 30
+Max listings per event: 100
+
+Fetching popular performers and their events...
+  Using popularity-ranked selection: 15 performers
+  Bruno Mars: 1 events, added 1
+  Lady Gaga: 1 events, added 1
+  Morgan Wallen: 1 events, added 1
+  BTS: 1 events, added 1
+  Taylor Swift: 0 events, added 0
+  Beyonce: 0 events, added 0
+  The Eagles: 1 events, added 1
+  Chris Stapleton: 1 events, added 1
+  Ariana Grande: 1 events, added 1
+  Harry Styles: 1 events, added 1
+  Backstreet Boys: 1 events, added 1
+  George Strait: 1 events, added 1
+  Megan Moroney: 1 events, added 1
+  Olivia Dean: 1 events, added 1
+  Rush: 1 events, added 1
+
+Found 13 popular events to monitor:
+   1. [Bruno Mars] Bruno Mars - $171.0 (2869 tix)
+   2. [Lady Gaga] Lady Gaga - $163.4 (610 tix)
+   3. [Morgan Wallen] Morgan Wallen - $79.8 (4851 tix)
+   4. [BTS] BTS - $125.4 (4917 tix)
+   5. [The Eagles] The Eagles - $386.65 (664 tix)
+   6. [Chris Stapleton] Chris Stapleton - $119.7 (435 tix)
+   7. [Ariana Grande] Ariana Grande - $586.04 (259 tix)
+   8. [Harry Styles] Harry Styles - $138.7 (814 tix)
+   9. [Backstreet Boys] Backstreet Boys - $338.2 (331 tix)
+  10. [George Strait] George Strait - $148.2 (2644 tix)
+  11. [Megan Moroney] Houston Rodeo - Megan Moroney - $37.05 (10336 tix)
+  12. [Olivia Dean] Olivia Dean - $277.34 (40 tix)
+  13. [Rush] Rush - $148.2 (886 tix)
+
+============================================================
+COLLECTING LISTINGS
+============================================================
+
+[1/13] Bruno Mars...
+    Collected 28 new listings (from 100 found)
+
+[2/13] Lady Gaga...
+    Collected 48 new listings (from 100 found)
+
+[3/13] Morgan Wallen...
+    Collected 15 new listings (from 100 found)
+
+[4/13] BTS...
+    Collected 41 new listings (from 100 found)
+
+[5/13] The Eagles...
+    Collected 64 new listings (from 100 found)
+
+[6/13] Chris Stapleton...
+    Collected 24 new listings (from 100 found)
+
+[7/13] Ariana Grande...
+    Collected 5 new listings (from 85 found)
+
+[8/13] Harry Styles...
+    Collected 1 new listings (from 100 found)
+
+[9/13] Backstreet Boys...
+    Collected 40 new listings (from 100 found)
+
+[10/13] George Strait...
+    Collected 24 new listings (from 100 found)
+
+[11/13] Houston Rodeo - Megan Moroney...
+    Collected 35 new listings (from 100 found)
+
+[12/13] Olivia Dean...
+    Found 13 listings (no price changes)
+
+[13/13] Rush...
+    Collected 2 new listings (from 100 found)
+
+============================================================
+COLLECTION SUMMARY
+============================================================
+Events attempted: 13
+Events succeeded: 13
+Total listings collected: 327
+
+============================================================
+CURRENT DATA STATS
+============================================================
+Total events being monitored: 41
+Total listings in database: 13164
+
+Completed at: 2026-02-11T20:07:20.905184
+PopularityService initialized with no API sources configured
+============================================================
+POPULAR EVENTS MONITOR
+============================================================
+Timestamp: 2026-02-11T21:07:23.713477
+Max events: 30
+Max listings per event: 100
+
+Fetching popular performers and their events...
+  Using popularity-ranked selection: 15 performers
+  Bruno Mars: 1 events, added 1
+  Lady Gaga: 1 events, added 1
+  Morgan Wallen: 1 events, added 1
+  BTS: 1 events, added 1
+  Taylor Swift: 0 events, added 0
+  Beyonce: 0 events, added 0
+  The Eagles: 1 events, added 1
+  Chris Stapleton: 1 events, added 1
+  Ariana Grande: 1 events, added 1
+  Harry Styles: 1 events, added 1
+  Backstreet Boys: 1 events, added 1
+  George Strait: 1 events, added 1
+  Megan Moroney: 1 events, added 1
+  Olivia Dean: 1 events, added 1
+  Rush: 1 events, added 1
+
+Found 13 popular events to monitor:
+   1. [Bruno Mars] Bruno Mars - $171.0 (2883 tix)
+   2. [Lady Gaga] Lady Gaga - $163.4 (620 tix)
+   3. [Morgan Wallen] Morgan Wallen - $79.8 (4855 tix)
+   4. [BTS] BTS - $125.4 (4909 tix)
+   5. [The Eagles] The Eagles - $386.65 (671 tix)
+   6. [Chris Stapleton] Chris Stapleton - $119.7 (433 tix)
+   7. [Ariana Grande] Ariana Grande - $602.7 (257 tix)
+   8. [Harry Styles] Harry Styles - $138.7 (814 tix)
+   9. [Backstreet Boys] Backstreet Boys - $338.2 (329 tix)
+  10. [George Strait] George Strait - $148.2 (2629 tix)
+  11. [Megan Moroney] Houston Rodeo - Megan Moroney - $37.05 (10336 tix)
+  12. [Olivia Dean] Olivia Dean - $277.34 (40 tix)
+  13. [Rush] Rush - $148.2 (886 tix)
+
+============================================================
+COLLECTING LISTINGS
+============================================================
+
+[1/13] Bruno Mars...
+    Found 100 listings (no price changes)
+
+[2/13] Lady Gaga...
+    Collected 2 new listings (from 100 found)
+
+[3/13] Morgan Wallen...
+    Found 100 listings (no price changes)
+
+[4/13] BTS...
+    Found 100 listings (no price changes)
+
+[5/13] The Eagles...
+    Collected 1 new listings (from 100 found)
+
+[6/13] Chris Stapleton...
+    Found 100 listings (no price changes)
+
+[7/13] Ariana Grande...
+    Collected 1 new listings (from 85 found)
+
+[8/13] Harry Styles...
+    Found 100 listings (no price changes)
+
+[9/13] Backstreet Boys...
+    Collected 2 new listings (from 100 found)
+
+[10/13] George Strait...
+    Found 100 listings (no price changes)
+
+[11/13] Houston Rodeo - Megan Moroney...
+    Found 100 listings (no price changes)
+
+[12/13] Olivia Dean...
+    Found 13 listings (no price changes)
+
+[13/13] Rush...
+    Found 100 listings (no price changes)
+
+============================================================
+COLLECTION SUMMARY
+============================================================
+Events attempted: 13
+Events succeeded: 13
+Total listings collected: 6
+
+============================================================
+CURRENT DATA STATS
+============================================================
+Total events being monitored: 41
+Total listings in database: 13170
+
+Completed at: 2026-02-11T21:11:47.768426

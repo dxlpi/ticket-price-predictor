@@ -122,13 +122,15 @@ class SchemaValidator(Preprocessor):
 
             # Flexible dtype checking (allow various datetime and numeric representations)
             is_valid = False
-            if "datetime" in expected_dtype and "datetime" in actual_dtype:
-                is_valid = True
-            elif "float" in expected_dtype and ("float" in actual_dtype or "int" in actual_dtype):
-                is_valid = True
-            elif "int" in expected_dtype and "int" in actual_dtype:
-                is_valid = True
-            elif actual_dtype == expected_dtype:
+            if (
+                "datetime" in expected_dtype
+                and "datetime" in actual_dtype
+                or "float" in expected_dtype
+                and ("float" in actual_dtype or "int" in actual_dtype)
+                or "int" in expected_dtype
+                and "int" in actual_dtype
+                or actual_dtype == expected_dtype
+            ):
                 is_valid = True
 
             if not is_valid:
@@ -267,7 +269,9 @@ class ReferentialValidator(Preprocessor):
 
         # Validate event_id references
         if self.events_df is not None and "event_id" in df.columns:
-            valid_event_ids = set(self.events_df["event_id"]) if "event_id" in self.events_df.columns else set()
+            valid_event_ids = (
+                set(self.events_df["event_id"]) if "event_id" in self.events_df.columns else set()
+            )
 
             if valid_event_ids:
                 invalid_indices = []

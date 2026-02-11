@@ -238,7 +238,7 @@ class QualityReporter:
             alert = AlertLevel.WARNING
 
         # Check null rates
-        for col, completeness in metrics.column_completeness.items():
+        for _col, completeness in metrics.column_completeness.items():
             null_rate = 100.0 - completeness
             if null_rate > self.thresholds.null_rate_error:
                 return AlertLevel.ERROR
@@ -277,7 +277,7 @@ class QualityReporter:
         Returns:
             Dictionary with comparison results and deltas
         """
-        comparison = {
+        comparison: dict[str, Any] = {
             "row_count_delta": current.output_rows - baseline.output_rows,
             "drop_rate_delta": current.drop_rate - baseline.drop_rate,
             "retention_rate_delta": current.retention_rate - baseline.retention_rate,
@@ -303,9 +303,7 @@ class QualityReporter:
                 comparison["degraded"].append(f"completeness:{col}")
 
         # Compare outlier counts
-        all_outlier_cols = set(current.outlier_counts.keys()) | set(
-            baseline.outlier_counts.keys()
-        )
+        all_outlier_cols = set(current.outlier_counts.keys()) | set(baseline.outlier_counts.keys())
         for col in all_outlier_cols:
             curr_val = current.outlier_counts.get(col, 0)
             base_val = baseline.outlier_counts.get(col, 0)

@@ -95,8 +95,7 @@ class FeaturePipeline:
     def get_params(self) -> dict[str, Any]:
         """Get parameters for all extractors."""
         return {
-            f"extractor_{i}": extractor.get_params()
-            for i, extractor in enumerate(self._extractors)
+            f"extractor_{i}": extractor.get_params() for i, extractor in enumerate(self._extractors)
         }
 
 

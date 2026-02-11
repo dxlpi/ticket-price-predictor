@@ -47,7 +47,7 @@ class TextNormalizer(Preprocessor):
             return ProcessingResult(
                 data=df,
                 issues=["Input DataFrame is empty"],
-                metrics={"rows_processed": 0, "columns_added": 0}
+                metrics={"rows_processed": 0, "columns_added": 0},
             )
 
         result_df = df.copy()
@@ -57,10 +57,7 @@ class TextNormalizer(Preprocessor):
         # Normalize artist_or_team
         if "artist_or_team" in result_df.columns:
             result_df["artist_normalized"] = (
-                result_df["artist_or_team"]
-                .fillna("")
-                .str.strip()
-                .str.lower()
+                result_df["artist_or_team"].fillna("").str.strip().str.lower()
             )
             columns_added += 1
         else:
@@ -69,10 +66,7 @@ class TextNormalizer(Preprocessor):
         # Normalize venue_name
         if "venue_name" in result_df.columns:
             result_df["venue_normalized"] = (
-                result_df["venue_name"]
-                .fillna("")
-                .str.strip()
-                .str.lower()
+                result_df["venue_name"].fillna("").str.strip().str.lower()
             )
             columns_added += 1
         else:
@@ -80,12 +74,7 @@ class TextNormalizer(Preprocessor):
 
         # Normalize city with common mappings
         if "city" in result_df.columns:
-            normalized_city = (
-                result_df["city"]
-                .fillna("")
-                .str.strip()
-                .str.lower()
-            )
+            normalized_city = result_df["city"].fillna("").str.strip().str.lower()
             # Apply city mappings
             result_df["city_normalized"] = normalized_city.replace(self.city_mappings)
             columns_added += 1
@@ -131,11 +120,7 @@ class PriceOutlierHandler(Preprocessor):
             return ProcessingResult(
                 data=df,
                 issues=["Input DataFrame is empty"],
-                metrics={
-                    "outlier_count": 0,
-                    "outlier_percentage": 0.0,
-                    "by_reason": {}
-                }
+                metrics={"outlier_count": 0, "outlier_percentage": 0.0, "by_reason": {}},
             )
 
         result_df = df.copy()
@@ -148,11 +133,7 @@ class PriceOutlierHandler(Preprocessor):
             return ProcessingResult(
                 data=result_df,
                 issues=issues,
-                metrics={
-                    "outlier_count": 0,
-                    "outlier_percentage": 0.0,
-                    "by_reason": {}
-                }
+                metrics={"outlier_count": 0, "outlier_percentage": 0.0, "by_reason": {}},
             )
 
         prices = result_df["listing_price"].dropna()
@@ -164,11 +145,7 @@ class PriceOutlierHandler(Preprocessor):
             return ProcessingResult(
                 data=result_df,
                 issues=issues,
-                metrics={
-                    "outlier_count": 0,
-                    "outlier_percentage": 0.0,
-                    "by_reason": {}
-                }
+                metrics={"outlier_count": 0, "outlier_percentage": 0.0, "by_reason": {}},
             )
 
         # Calculate IQR bounds
@@ -204,7 +181,9 @@ class PriceOutlierHandler(Preprocessor):
         outlier_count = result_df["is_price_outlier"].sum()
         outlier_percentage = (outlier_count / len(result_df)) * 100 if len(result_df) > 0 else 0.0
 
-        by_reason = result_df[result_df["is_price_outlier"]]["outlier_reason"].value_counts().to_dict()
+        by_reason = (
+            result_df[result_df["is_price_outlier"]]["outlier_reason"].value_counts().to_dict()
+        )
 
         metrics = {
             "outlier_count": int(outlier_count),
@@ -251,10 +230,7 @@ class DuplicateHandler(Preprocessor):
             return ProcessingResult(
                 data=df,
                 issues=["Input DataFrame is empty"],
-                metrics={
-                    "duplicate_count": 0,
-                    "duplicate_percentage": 0.0
-                }
+                metrics={"duplicate_count": 0, "duplicate_percentage": 0.0},
             )
 
         result_df = df.copy()
@@ -270,10 +246,7 @@ class DuplicateHandler(Preprocessor):
             return ProcessingResult(
                 data=result_df,
                 issues=issues,
-                metrics={
-                    "duplicate_count": 0,
-                    "duplicate_percentage": 0.0
-                }
+                metrics={"duplicate_count": 0, "duplicate_percentage": 0.0},
             )
 
         # Ensure timestamp is datetime
@@ -286,10 +259,7 @@ class DuplicateHandler(Preprocessor):
                 return ProcessingResult(
                     data=result_df,
                     issues=issues,
-                    metrics={
-                        "duplicate_count": 0,
-                        "duplicate_percentage": 0.0
-                    }
+                    metrics={"duplicate_count": 0, "duplicate_percentage": 0.0},
                 )
 
         # Fill None values for seat columns with empty string for grouping
@@ -312,7 +282,7 @@ class DuplicateHandler(Preprocessor):
         # Group by identifying fields
         group_cols = ["event_id", "section", "row", "seat_from", "seat_to"]
 
-        for name, group in result_df.groupby(group_cols):
+        for _name, group in result_df.groupby(group_cols):
             if len(group) <= 1:
                 continue
 
@@ -335,7 +305,9 @@ class DuplicateHandler(Preprocessor):
 
         # Calculate metrics
         duplicate_count = result_df["is_duplicate"].sum()
-        duplicate_percentage = (duplicate_count / len(result_df)) * 100 if len(result_df) > 0 else 0.0
+        duplicate_percentage = (
+            (duplicate_count / len(result_df)) * 100 if len(result_df) > 0 else 0.0
+        )
 
         metrics = {
             "duplicate_count": int(duplicate_count),

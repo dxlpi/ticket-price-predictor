@@ -62,18 +62,16 @@ class SeatingFeatureExtractor(FeatureExtractor):
             result["row_numeric"] = 10  # Default mid-row
 
         # Section hash for venue-specific patterns
-        result["section_hash"] = df["section"].apply(
-            lambda s: hash(s.lower().strip()) % 1000
-        )
+        result["section_hash"] = df["section"].apply(lambda s: hash(s.lower().strip()) % 1000)
 
         # Binary features
         section_lower = df["section"].str.lower()
         result["is_floor"] = (
             section_lower.str.contains("floor|pit|field|courtside", regex=True)
         ).astype(int)
-        result["is_ga"] = (
-            section_lower.str.contains("ga|general admission", regex=True)
-        ).astype(int)
+        result["is_ga"] = (section_lower.str.contains("ga|general admission", regex=True)).astype(
+            int
+        )
 
         return result
 

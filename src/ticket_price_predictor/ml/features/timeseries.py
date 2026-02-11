@@ -31,8 +31,8 @@ class TimeSeriesFeatureExtractor(FeatureExtractor):
 
         # Core time features
         result["days_to_event"] = days
-        result["days_to_event_squared"] = days ** 2
-        result["days_to_event_sqrt"] = (days + 1).apply(lambda x: x ** 0.5)  # sqrt transform
+        result["days_to_event_squared"] = days**2
+        result["days_to_event_sqrt"] = (days + 1).apply(lambda x: x**0.5)  # sqrt transform
 
         # Urgency buckets
         result["urgency_bucket"] = days.apply(self._urgency_bucket)

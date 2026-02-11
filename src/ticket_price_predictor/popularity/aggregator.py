@@ -14,6 +14,7 @@ _config = get_ml_config()
 
 class PopularityTier(str, Enum):
     """Artist popularity tiers."""
+
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
@@ -22,6 +23,7 @@ class PopularityTier(str, Enum):
 @dataclass
 class ArtistPopularity:
     """Aggregated artist popularity data."""
+
     name: str
     popularity_score: float  # 0-100 combined score
     tier: PopularityTier
@@ -102,9 +104,7 @@ class PopularityAggregator:
 
         if songkick_trackers is not None:
             sources.append("songkick_trackers")
-            metrics["songkick_trackers"] = self._normalize_log(
-                songkick_trackers, self.MAX_TRACKERS
-            )
+            metrics["songkick_trackers"] = self._normalize_log(songkick_trackers, self.MAX_TRACKERS)
 
         if bandsintown_trackers is not None:
             sources.append("bandsintown_trackers")
@@ -176,14 +176,9 @@ class PopularityAggregator:
         if total_weight == 0:
             return 0.0
 
-        normalized_weights = {
-            s: w / total_weight for s, w in available_weights.items()
-        }
+        normalized_weights = {s: w / total_weight for s, w in available_weights.items()}
 
         # Calculate weighted sum
-        score = sum(
-            metrics[source] * normalized_weights[source]
-            for source in sources
-        )
+        score = sum(metrics[source] * normalized_weights[source] for source in sources)
 
         return min(100.0, max(0.0, score))

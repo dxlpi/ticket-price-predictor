@@ -1,11 +1,7 @@
 """Tests for popularity module."""
 
-import json
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from ticket_price_predictor.popularity.aggregator import (
     ArtistPopularity,
@@ -26,7 +22,6 @@ from ticket_price_predictor.popularity.spotify import (
     SpotifyMetrics,
     SpotifyPopularity,
 )
-
 
 # ============================================================================
 # SpotifyPopularity Tests
@@ -417,9 +412,7 @@ class TestPopularityAggregator:
         aggregator = PopularityAggregator()
 
         # Only Spotify popularity
-        result1 = aggregator.calculate_score(
-            artist_name="Test1", spotify_popularity=80
-        )
+        result1 = aggregator.calculate_score(artist_name="Test1", spotify_popularity=80)
 
         # Spotify popularity + followers
         result2 = aggregator.calculate_score(
@@ -479,9 +472,7 @@ class TestPopularityCache:
 
         # Manually expire the entry
         key = cache._normalize_key("Test")
-        cache._cache[key]["cached_at"] = (
-            datetime.now() - timedelta(hours=2)
-        ).isoformat()
+        cache._cache[key]["cached_at"] = (datetime.now() - timedelta(hours=2)).isoformat()
 
         # Should return None (expired)
         assert cache.get("Test") is None
@@ -525,9 +516,7 @@ class TestPopularityCache:
         expired = ArtistPopularity("Expired", 60.0, PopularityTier.HIGH)
         cache.set("Expired", expired)
         key = cache._normalize_key("Expired")
-        cache._cache[key]["cached_at"] = (
-            datetime.now() - timedelta(hours=2)
-        ).isoformat()
+        cache._cache[key]["cached_at"] = (datetime.now() - timedelta(hours=2)).isoformat()
 
         # Clear expired
         removed = cache.clear_expired()
@@ -557,7 +546,9 @@ class TestPopularityService:
         mock_spotify.available = True
 
         # Patch the SpotifyPopularity constructor
-        with patch("ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify):
+        with patch(
+            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+        ):
             service = PopularityService(cache_dir=tmp_path)
 
         assert service.spotify is not None
@@ -571,7 +562,9 @@ class TestPopularityService:
         mock_spotify.available = True
 
         # Patch the SpotifyPopularity constructor
-        with patch("ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify):
+        with patch(
+            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+        ):
             service = PopularityService(
                 spotify_client_id="param_id",
                 spotify_client_secret="param_secret",
@@ -618,7 +611,9 @@ class TestPopularityService:
         )
 
         # Patch the SpotifyPopularity constructor
-        with patch("ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify):
+        with patch(
+            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+        ):
             service = PopularityService(
                 spotify_client_id="test_id",
                 spotify_client_secret="test_secret",
@@ -649,9 +644,7 @@ class TestPopularityService:
             pop = ArtistPopularity(name, score, tier)
             service.cache.set(name, pop)
 
-        ranked = service.rank_performers(
-            ["Low Artist", "High Artist", "Medium Artist"]
-        )
+        ranked = service.rank_performers(["Low Artist", "High Artist", "Medium Artist"])
 
         # Should be sorted by score (highest first)
         assert ranked[0].name == "High Artist"
@@ -667,9 +660,7 @@ class TestPopularityService:
             pop = ArtistPopularity(f"Artist {i}", float(i * 10), PopularityTier.LOW)
             service.cache.set(f"Artist {i}", pop)
 
-        ranked = service.rank_performers(
-            [f"Artist {i}" for i in range(5)], coverage_threshold=0.99
-        )
+        ranked = service.rank_performers([f"Artist {i}" for i in range(5)], coverage_threshold=0.99)
 
         # Should return at least 3
         assert len(ranked) >= 3
@@ -728,7 +719,9 @@ class TestPopularityIntegration:
         mock_spotify.get_artist_metrics = mock_get_artist_metrics
 
         # Patch the SpotifyPopularity constructor
-        with patch("ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify):
+        with patch(
+            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+        ):
             service = PopularityService(
                 spotify_client_id="test_id",
                 spotify_client_secret="test_secret",
@@ -755,7 +748,9 @@ class TestPopularityIntegration:
         mock_spotify.get_artist_metrics.return_value = None  # Simulates internal error handling
 
         # Patch the SpotifyPopularity constructor
-        with patch("ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify):
+        with patch(
+            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+        ):
             service = PopularityService(
                 spotify_client_id="test_id",
                 spotify_client_secret="test_secret",

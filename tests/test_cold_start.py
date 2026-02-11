@@ -1,13 +1,10 @@
 """Tests for cold start handler."""
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from ticket_price_predictor.ml.inference.cold_start import ColdStartEstimate, ColdStartHandler
 from ticket_price_predictor.normalization.seat_zones import SeatZone
 from ticket_price_predictor.popularity.aggregator import ArtistPopularity, PopularityTier
-
 
 # ============================================================================
 # ColdStartEstimate Tests
@@ -90,8 +87,7 @@ class TestColdStartHandler:
 
         # Add history
         handler.update_historical_prices(
-            "New Artist",
-            {SeatZone.FLOOR_VIP: 600.0, SeatZone.LOWER_TIER: 300.0}
+            "New Artist", {SeatZone.FLOOR_VIP: 600.0, SeatZone.LOWER_TIER: 300.0}
         )
 
         # Should now use history
@@ -173,8 +169,14 @@ class TestColdStartHandlerAdjustments:
         estimate_tier3 = handler.get_estimate("Unknown Artist", city_tier=3)
 
         # Tier 1 cities should have highest prices
-        assert estimate_tier1.prices_by_zone[SeatZone.FLOOR_VIP] > estimate_tier2.prices_by_zone[SeatZone.FLOOR_VIP]
-        assert estimate_tier2.prices_by_zone[SeatZone.FLOOR_VIP] > estimate_tier3.prices_by_zone[SeatZone.FLOOR_VIP]
+        assert (
+            estimate_tier1.prices_by_zone[SeatZone.FLOOR_VIP]
+            > estimate_tier2.prices_by_zone[SeatZone.FLOOR_VIP]
+        )
+        assert (
+            estimate_tier2.prices_by_zone[SeatZone.FLOOR_VIP]
+            > estimate_tier3.prices_by_zone[SeatZone.FLOOR_VIP]
+        )
 
     def test_event_type_adjustment(self):
         """Test event type affects prices."""
@@ -185,8 +187,12 @@ class TestColdStartHandlerAdjustments:
         theater = handler.get_estimate("Artist", event_type="THEATER")
 
         # Theater should be highest, sports lowest
-        assert theater.prices_by_zone[SeatZone.FLOOR_VIP] > concert.prices_by_zone[SeatZone.FLOOR_VIP]
-        assert concert.prices_by_zone[SeatZone.FLOOR_VIP] > sports.prices_by_zone[SeatZone.FLOOR_VIP]
+        assert (
+            theater.prices_by_zone[SeatZone.FLOOR_VIP] > concert.prices_by_zone[SeatZone.FLOOR_VIP]
+        )
+        assert (
+            concert.prices_by_zone[SeatZone.FLOOR_VIP] > sports.prices_by_zone[SeatZone.FLOOR_VIP]
+        )
 
     def test_combined_adjustments(self):
         """Test combined city and event adjustments."""
@@ -199,7 +205,10 @@ class TestColdStartHandlerAdjustments:
         budget = handler.get_estimate("Unknown", event_type="SPORTS", city_tier=3)
 
         # Premium should be much higher
-        assert premium.prices_by_zone[SeatZone.FLOOR_VIP] > budget.prices_by_zone[SeatZone.FLOOR_VIP] * 2
+        assert (
+            premium.prices_by_zone[SeatZone.FLOOR_VIP]
+            > budget.prices_by_zone[SeatZone.FLOOR_VIP] * 2
+        )
 
 
 # ============================================================================

@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -51,7 +51,7 @@ class ModelTrainer:
         """Return training metrics."""
         return self._metrics
 
-    def _create_model(self, params: dict | None = None) -> PriceModel:
+    def _create_model(self, params: dict[str, Any] | None = None) -> PriceModel:
         """Create model instance based on type.
 
         Args:
@@ -189,7 +189,7 @@ class ModelTrainer:
     def train_with_params(
         self,
         split: DataSplit,
-        params: dict,
+        params: dict[str, Any],
     ) -> TrainingMetrics:
         """Train model with custom hyperparameters.
 

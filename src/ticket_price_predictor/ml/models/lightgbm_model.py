@@ -1,7 +1,7 @@
 """LightGBM model for price prediction."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import joblib
 import lightgbm as lgb
@@ -112,21 +112,24 @@ class LightGBMModel(PriceModel):
             valid_names.append("valid")
 
         # Extract training params (use copy to avoid mutating self._params)
-        train_params = {k: v for k, v in self._params.items()
-                        if k not in ("n_estimators", "early_stopping_rounds")}
+        train_params = {
+            k: v
+            for k, v in self._params.items()
+            if k not in ("n_estimators", "early_stopping_rounds")
+        }
         n_estimators = self._params.get("n_estimators", 500)
         early_stopping_rounds = self._params.get("early_stopping_rounds", 50)
 
         # Train
-        callbacks = []
+        callbacks: list[Any] = []
         if X_val is not None:
-            callbacks.append(lgb.early_stopping(stopping_rounds=early_stopping_rounds))
+            callbacks.append(lgb.early_stopping(stopping_rounds=int(early_stopping_rounds)))
         callbacks.append(lgb.log_evaluation(period=100))
 
         self._model = lgb.train(
             train_params,
             train_data,
-            num_boost_round=n_estimators,
+            num_boost_round=int(n_estimators),
             valid_sets=valid_sets,
             valid_names=valid_names,
             callbacks=callbacks,
@@ -149,7 +152,7 @@ class LightGBMModel(PriceModel):
         if not self._fitted or self._model is None:
             raise RuntimeError("Model must be fitted before predicting")
 
-        return self._model.predict(X, num_iteration=self._best_iteration)
+        return self._model.predict(X, num_iteration=self._best_iteration)  # type: ignore[return-value]
 
     def get_feature_importance(self) -> dict[str, float]:
         """Get feature importance scores.
@@ -168,7 +171,7 @@ class LightGBMModel(PriceModel):
         if total > 0:
             importance = importance / total
 
-        result = dict(zip(feature_names, importance))
+        result = dict(zip(feature_names, importance, strict=False))
 
         # Sort by importance
         return dict(sorted(result.items(), key=lambda x: -x[1])[:20])
@@ -295,12 +298,10 @@ class QuantileLightGBMModel(PriceModel):
             params = self._base_params.copy()
             params["alpha"] = quantile
 
-            n_estimators = params.pop("n_estimators", 500)
-            early_stopping = params.pop("early_stopping_rounds", 50)
+            n_estimators = cast(int, params.pop("n_estimators", 500))
+            early_stopping = cast(int, params.pop("early_stopping_rounds", 50))
 
-            cat_features = [
-                c for c in self._categorical_features if c in X_train.columns
-            ]
+            cat_features = [c for c in self._categorical_features if c in X_train.columns]
 
             train_data = lgb.Dataset(
                 X_train,
@@ -313,14 +314,14 @@ class QuantileLightGBMModel(PriceModel):
                 val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
                 valid_sets.append(val_data)
 
-            callbacks = []
+            callbacks: list[Any] = []
             if X_val is not None:
-                callbacks.append(lgb.early_stopping(stopping_rounds=early_stopping))
+                callbacks.append(lgb.early_stopping(stopping_rounds=int(early_stopping)))
 
             model = lgb.train(
                 params,
                 train_data,
-                num_boost_round=n_estimators,
+                num_boost_round=int(n_estimators),
                 valid_sets=valid_sets,
                 callbacks=callbacks,
             )
@@ -342,7 +343,7 @@ class QuantileLightGBMModel(PriceModel):
         if not self._fitted or self._model_median is None:
             raise RuntimeError("Model must be fitted before predicting")
 
-        return self._model_median.predict(X)
+        return self._model_median.predict(X)  # type: ignore[return-value]
 
     def predict_with_uncertainty(
         self, X: pd.DataFrame
@@ -358,9 +359,12 @@ class QuantileLightGBMModel(PriceModel):
         if not self._fitted:
             raise RuntimeError("Model must be fitted before predicting")
 
-        median = self._model_median.predict(X)  # type: ignore
-        lower = self._model_lower.predict(X)  # type: ignore
-        upper = self._model_upper.predict(X)  # type: ignore
+        assert self._model_median is not None
+        assert self._model_lower is not None
+        assert self._model_upper is not None
+        median: np.ndarray = self._model_median.predict(X)  # type: ignore[assignment]
+        lower: np.ndarray = self._model_lower.predict(X)  # type: ignore[assignment]
+        upper: np.ndarray = self._model_upper.predict(X)  # type: ignore[assignment]
 
         return median, lower, upper
 
@@ -376,7 +380,7 @@ class QuantileLightGBMModel(PriceModel):
         if total > 0:
             importance = importance / total
 
-        result = dict(zip(feature_names, importance))
+        result = dict(zip(feature_names, importance, strict=False))
         return dict(sorted(result.items(), key=lambda x: -x[1])[:20])
 
     def save(self, path: Path) -> None:

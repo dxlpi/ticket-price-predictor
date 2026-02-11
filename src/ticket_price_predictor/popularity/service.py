@@ -106,10 +106,18 @@ class PopularityService:
                     name=str(cached["name"]),
                     popularity_score=float(cached["popularity_score"]),
                     tier=PopularityTier(str(cached["tier"])),
-                    spotify_popularity=int(cached["spotify_popularity"]) if cached.get("spotify_popularity") is not None else None,
-                    spotify_followers=int(cached["spotify_followers"]) if cached.get("spotify_followers") is not None else None,
-                    songkick_trackers=int(cached["songkick_trackers"]) if cached.get("songkick_trackers") is not None else None,
-                    bandsintown_trackers=int(cached["bandsintown_trackers"]) if cached.get("bandsintown_trackers") is not None else None,
+                    spotify_popularity=int(cached["spotify_popularity"])
+                    if cached.get("spotify_popularity") is not None
+                    else None,
+                    spotify_followers=int(cached["spotify_followers"])
+                    if cached.get("spotify_followers") is not None
+                    else None,
+                    songkick_trackers=int(cached["songkick_trackers"])
+                    if cached.get("songkick_trackers") is not None
+                    else None,
+                    bandsintown_trackers=int(cached["bandsintown_trackers"])
+                    if cached.get("bandsintown_trackers") is not None
+                    else None,
                     sources_available=list(cached.get("sources_available", [])),
                 )
 
@@ -214,7 +222,7 @@ class PopularityService:
 
         logger.info(
             f"Selected {len(selected)}/{len(popularities)} performers "
-            f"(coverage: {cumulative/total_score*100:.1f}%)"
+            f"(coverage: {cumulative / total_score * 100:.1f}%)"
         )
 
         return selected

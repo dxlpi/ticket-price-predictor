@@ -43,23 +43,57 @@ class ColdStartHandler:
     DEMAND_MULTIPLIERS = _config.get_category_multipliers()
 
     # K-pop keywords for detection (fallback when PopularityService unavailable)
-    KPOP_KEYWORDS = frozenset([
-        "blackpink", "bts", "twice", "stray kids", "aespa", "newjeans",
-        "seventeen", "nct", "exo", "red velvet", "itzy", "ive", "le sserafim",
-    ])
+    KPOP_KEYWORDS = frozenset(
+        [
+            "blackpink",
+            "bts",
+            "twice",
+            "stray kids",
+            "aespa",
+            "newjeans",
+            "seventeen",
+            "nct",
+            "exo",
+            "red velvet",
+            "itzy",
+            "ive",
+            "le sserafim",
+        ]
+    )
 
     # Major artist keywords (fallback)
-    MAJOR_ARTISTS = frozenset([
-        "taylor swift", "beyonce", "coldplay", "ed sheeran", "eagles",
-        "the weeknd", "drake", "bad bunny", "harry styles", "adele",
-        "bruno mars", "lady gaga", "billie eilish", "post malone",
-    ])
+    MAJOR_ARTISTS = frozenset(
+        [
+            "taylor swift",
+            "beyonce",
+            "coldplay",
+            "ed sheeran",
+            "eagles",
+            "the weeknd",
+            "drake",
+            "bad bunny",
+            "harry styles",
+            "adele",
+            "bruno mars",
+            "lady gaga",
+            "billie eilish",
+            "post malone",
+        ]
+    )
 
     # Country artist keywords (fallback)
-    COUNTRY_ARTISTS = frozenset([
-        "morgan wallen", "zach bryan", "luke combs", "chris stapleton",
-        "kenny chesney", "jason aldean", "thomas rhett", "carrie underwood",
-    ])
+    COUNTRY_ARTISTS = frozenset(
+        [
+            "morgan wallen",
+            "zach bryan",
+            "luke combs",
+            "chris stapleton",
+            "kenny chesney",
+            "jason aldean",
+            "thomas rhett",
+            "carrie underwood",
+        ]
+    )
 
     def __init__(
         self,
@@ -124,7 +158,9 @@ class ColdStartHandler:
         multiplier, source = self._get_tier_multiplier(artist_name)
 
         # City tier adjustment (from config)
-        city_multiplier = _config.get_city_multipliers().get(city_tier, _config.city_multiplier_tier2)
+        city_multiplier = _config.get_city_multipliers().get(
+            city_tier, _config.city_multiplier_tier2
+        )
 
         # Event type adjustment (from config)
         event_multiplier = _config.get_event_multipliers().get(
@@ -134,8 +170,7 @@ class ColdStartHandler:
         # Calculate prices
         total_multiplier = multiplier * city_multiplier * event_multiplier
         prices = {
-            zone: price * total_multiplier
-            for zone, price in self.GLOBAL_ZONE_DEFAULTS.items()
+            zone: price * total_multiplier for zone, price in self.GLOBAL_ZONE_DEFAULTS.items()
         }
 
         # Higher confidence when using PopularityService (from config)
@@ -171,9 +206,7 @@ class ColdStartHandler:
                 popularity = self._popularity_service.get_artist_popularity(artist_name)
                 tier = popularity.tier.value  # "high", "medium", or "low"
                 multiplier = self.TIER_MULTIPLIERS.get(tier, 1.0)
-                logger.debug(
-                    f"PopularityService tier for '{artist_name}': {tier} -> {multiplier}x"
-                )
+                logger.debug(f"PopularityService tier for '{artist_name}': {tier} -> {multiplier}x")
                 return multiplier, "popularity_service"
             except Exception as e:
                 logger.warning(

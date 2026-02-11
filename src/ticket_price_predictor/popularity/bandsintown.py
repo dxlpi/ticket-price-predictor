@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class BandsintownMetrics:
     """Metrics from Bandsintown API."""
+
     bandsintown_id: str
     tracker_count: int
     upcoming_event_count: int

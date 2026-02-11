@@ -70,7 +70,7 @@ class PreprocessingPipeline:
 
         for i, stage in enumerate(self.stages):
             stage_name = stage.__class__.__name__
-            logger.info(f"Stage {i+1}/{len(self.stages)}: {stage_name}")
+            logger.info(f"Stage {i + 1}/{len(self.stages)}: {stage_name}")
 
             try:
                 # Process stage
@@ -90,7 +90,9 @@ class PreprocessingPipeline:
 
                 # Save checkpoint if configured
                 if self.checkpoint_dir:
-                    checkpoint_path = self.checkpoint_dir / f"{self.name}_stage_{i+1}_{stage_name}.parquet"
+                    checkpoint_path = (
+                        self.checkpoint_dir / f"{self.name}_stage_{i + 1}_{stage_name}.parquet"
+                    )
                     current_df.to_parquet(checkpoint_path)
                     logger.debug(f"Checkpoint saved: {checkpoint_path}")
 
@@ -101,7 +103,10 @@ class PreprocessingPipeline:
 
                 # Save failure checkpoint
                 if self.checkpoint_dir:
-                    failure_path = self.checkpoint_dir / f"{self.name}_stage_{i+1}_{stage_name}_FAILED.parquet"
+                    failure_path = (
+                        self.checkpoint_dir
+                        / f"{self.name}_stage_{i + 1}_{stage_name}_FAILED.parquet"
+                    )
                     current_df.to_parquet(failure_path)
                     logger.info(f"Failure checkpoint saved: {failure_path}")
 
@@ -142,7 +147,9 @@ class PreprocessingPipeline:
             raise ValueError(f"Invalid stage_index: {stage_index} (must be 1-{len(self.stages)})")
 
         stage_name = self.stages[stage_index - 1].__class__.__name__
-        checkpoint_path = self.checkpoint_dir / f"{self.name}_stage_{stage_index}_{stage_name}.parquet"
+        checkpoint_path = (
+            self.checkpoint_dir / f"{self.name}_stage_{stage_index}_{stage_name}.parquet"
+        )
 
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
@@ -196,15 +203,15 @@ class PipelineBuilder:
                 events_df=events_df, config=self.config, checkpoint_dir=checkpoint_dir
             )
         elif dataset_type == "events":
-            return self.build_events_pipeline(
-                config=self.config, checkpoint_dir=checkpoint_dir
-            )
+            return self.build_events_pipeline(config=self.config, checkpoint_dir=checkpoint_dir)
         elif dataset_type == "snapshots":
             return self.build_snapshots_pipeline(
                 events_df=events_df, config=self.config, checkpoint_dir=checkpoint_dir
             )
         else:
-            raise ValueError(f"Unknown dataset type: {dataset_type}. Must be one of: listings, events, snapshots")
+            raise ValueError(
+                f"Unknown dataset type: {dataset_type}. Must be one of: listings, events, snapshots"
+            )
 
     def build_default(
         self,

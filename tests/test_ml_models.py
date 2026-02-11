@@ -8,7 +8,6 @@ from ticket_price_predictor.ml.models.base import PriceModel
 from ticket_price_predictor.ml.models.baseline import BaselineModel
 from ticket_price_predictor.ml.models.lightgbm_model import LightGBMModel, QuantileLightGBMModel
 
-
 # ============================================================================
 # BaselineModel Tests
 # ============================================================================
@@ -20,22 +19,24 @@ class TestBaselineModel:
     @pytest.fixture
     def sample_features(self):
         """Create sample features matching BaselineModel expected columns."""
-        return pd.DataFrame({
-            "seat_zone_encoded": [0, 1, 2, 0, 1],
-            "event_type_encoded": [0, 0, 0, 0, 0],
-            "city_tier": [1, 2, 3, 1, 2],
-            "day_of_week": [5, 6, 0, 1, 2],
-            "urgency_bucket": [3, 2, 1, 4, 3],
-            "venue_capacity_bucket": [1, 2, 2, 1, 3],
-            "days_to_event": [14, 30, 7, 3, 21],
-            "days_to_event_squared": [196, 900, 49, 9, 441],
-            "zone_price_ratio": [1.0, 0.8, 0.5, 1.2, 0.9],
-            "row_numeric": [1, 10, 20, 5, 15],
-            "is_weekend": [1, 1, 0, 0, 0],
-            "is_floor": [1, 0, 0, 1, 0],
-            "is_ga": [0, 0, 0, 0, 1],
-            "is_last_week": [0, 0, 1, 1, 0],
-        })
+        return pd.DataFrame(
+            {
+                "seat_zone_encoded": [0, 1, 2, 0, 1],
+                "event_type_encoded": [0, 0, 0, 0, 0],
+                "city_tier": [1, 2, 3, 1, 2],
+                "day_of_week": [5, 6, 0, 1, 2],
+                "urgency_bucket": [3, 2, 1, 4, 3],
+                "venue_capacity_bucket": [1, 2, 2, 1, 3],
+                "days_to_event": [14, 30, 7, 3, 21],
+                "days_to_event_squared": [196, 900, 49, 9, 441],
+                "zone_price_ratio": [1.0, 0.8, 0.5, 1.2, 0.9],
+                "row_numeric": [1, 10, 20, 5, 15],
+                "is_weekend": [1, 1, 0, 0, 0],
+                "is_floor": [1, 0, 0, 1, 0],
+                "is_ga": [0, 0, 0, 0, 1],
+                "is_last_week": [0, 0, 1, 1, 0],
+            }
+        )
 
     def test_is_price_model(self):
         """Test BaselineModel inherits from PriceModel."""
@@ -107,15 +108,15 @@ class TestLightGBMModel:
         """Create sample training data."""
         np.random.seed(42)
         n = 100
-        X = pd.DataFrame({
-            "feature1": np.random.randn(n),
-            "feature2": np.random.randn(n),
-            "feature3": np.random.randn(n),
-        })
-        # Create target correlated with features
-        y = pd.Series(
-            100 + 20 * X["feature1"] + 10 * X["feature2"] + np.random.randn(n) * 5
+        X = pd.DataFrame(
+            {
+                "feature1": np.random.randn(n),
+                "feature2": np.random.randn(n),
+                "feature3": np.random.randn(n),
+            }
         )
+        # Create target correlated with features
+        y = pd.Series(100 + 20 * X["feature1"] + 10 * X["feature2"] + np.random.randn(n) * 5)
         return X, y
 
     def test_is_price_model(self):
@@ -213,13 +214,13 @@ class TestQuantileLightGBMModel:
         """Create sample training data."""
         np.random.seed(42)
         n = 200
-        X = pd.DataFrame({
-            "feature1": np.random.randn(n),
-            "feature2": np.random.randn(n),
-        })
-        y = pd.Series(
-            100 + 20 * X["feature1"] + np.random.randn(n) * 10
+        X = pd.DataFrame(
+            {
+                "feature1": np.random.randn(n),
+                "feature2": np.random.randn(n),
+            }
         )
+        y = pd.Series(100 + 20 * X["feature1"] + np.random.randn(n) * 10)
         return X, y
 
     def test_is_price_model(self):
@@ -260,13 +261,17 @@ class TestQuantileLightGBMModel:
 
         # Lower should generally be <= median <= upper
         # Allow small number of violations due to quantile crossing in small samples
-        violations_lower = sum(l > m for l, m in zip(lower, median))
-        violations_upper = sum(m > u for m, u in zip(median, upper))
+        violations_lower = sum(lo > m for lo, m in zip(lower, median, strict=False))
+        violations_upper = sum(m > up for m, up in zip(median, upper, strict=False))
 
         # At most 5% violations allowed
         max_violations = int(len(median) * 0.05) + 1
-        assert violations_lower <= max_violations, f"Too many lower > median violations: {violations_lower}"
-        assert violations_upper <= max_violations, f"Too many median > upper violations: {violations_upper}"
+        assert violations_lower <= max_violations, (
+            f"Too many lower > median violations: {violations_lower}"
+        )
+        assert violations_upper <= max_violations, (
+            f"Too many median > upper violations: {violations_upper}"
+        )
 
     def test_coverage(self, sample_data):
         """Test prediction interval coverage."""
@@ -281,8 +286,7 @@ class TestQuantileLightGBMModel:
 
         # Count how many actual values fall within prediction interval
         in_interval = sum(
-            (l <= actual <= u)
-            for l, actual, u in zip(lower, y_test, upper)
+            (lo <= actual <= up) for lo, actual, up in zip(lower, y_test, upper, strict=False)
         )
         coverage = in_interval / len(y_test)
 
@@ -333,28 +337,28 @@ class TestModelComparison:
         """Create sample data for comparison with proper features."""
         np.random.seed(42)
         n = 200
-        X = pd.DataFrame({
-            "feature1": np.random.randn(n),
-            "feature2": np.random.randn(n),
-            # Add features that BaselineModel expects
-            "seat_zone_encoded": np.random.randint(0, 4, n),
-            "event_type_encoded": np.random.randint(0, 3, n),
-            "city_tier": np.random.randint(1, 4, n),
-            "day_of_week": np.random.randint(0, 7, n),
-            "urgency_bucket": np.random.randint(0, 5, n),
-            "venue_capacity_bucket": np.random.randint(0, 4, n),
-            "days_to_event": np.random.randint(1, 60, n),
-            "days_to_event_squared": np.random.randint(1, 3600, n),
-            "zone_price_ratio": np.random.rand(n) + 0.5,
-            "row_numeric": np.random.randint(1, 30, n),
-            "is_weekend": np.random.randint(0, 2, n),
-            "is_floor": np.random.randint(0, 2, n),
-            "is_ga": np.random.randint(0, 2, n),
-            "is_last_week": np.random.randint(0, 2, n),
-        })
-        y = pd.Series(
-            100 + 20 * X["feature1"] + 10 * X["feature2"] + np.random.randn(n) * 5
+        X = pd.DataFrame(
+            {
+                "feature1": np.random.randn(n),
+                "feature2": np.random.randn(n),
+                # Add features that BaselineModel expects
+                "seat_zone_encoded": np.random.randint(0, 4, n),
+                "event_type_encoded": np.random.randint(0, 3, n),
+                "city_tier": np.random.randint(1, 4, n),
+                "day_of_week": np.random.randint(0, 7, n),
+                "urgency_bucket": np.random.randint(0, 5, n),
+                "venue_capacity_bucket": np.random.randint(0, 4, n),
+                "days_to_event": np.random.randint(1, 60, n),
+                "days_to_event_squared": np.random.randint(1, 3600, n),
+                "zone_price_ratio": np.random.rand(n) + 0.5,
+                "row_numeric": np.random.randint(1, 30, n),
+                "is_weekend": np.random.randint(0, 2, n),
+                "is_floor": np.random.randint(0, 2, n),
+                "is_ga": np.random.randint(0, 2, n),
+                "is_last_week": np.random.randint(0, 2, n),
+            }
         )
+        y = pd.Series(100 + 20 * X["feature1"] + 10 * X["feature2"] + np.random.randn(n) * 5)
         return X, y
 
     def test_lightgbm_beats_baseline(self, sample_data):

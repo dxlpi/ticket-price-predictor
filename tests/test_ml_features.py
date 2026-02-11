@@ -1,18 +1,15 @@
 """Tests for ML feature extractors."""
 
 import pandas as pd
-import pytest
 
 from ticket_price_predictor.ml.features.artist_stats import ArtistStats, ArtistStatsCache
 from ticket_price_predictor.ml.features.event import EventFeatureExtractor
-from ticket_price_predictor.ml.features.performer import PerformerFeatureExtractor
 from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
 from ticket_price_predictor.ml.features.seating import SeatingFeatureExtractor
 from ticket_price_predictor.ml.features.timeseries import (
     MomentumFeatureExtractor,
     TimeSeriesFeatureExtractor,
 )
-
 
 # ============================================================================
 # ArtistStatsCache Tests
@@ -24,11 +21,13 @@ class TestArtistStatsCache:
 
     def test_fit_creates_stats(self):
         """Test fitting creates artist statistics."""
-        df = pd.DataFrame({
-            "artist_or_team": ["Artist A", "Artist A", "Artist B"],
-            "listing_price": [100.0, 150.0, 200.0],
-            "event_id": ["e1", "e1", "e2"],
-        })
+        df = pd.DataFrame(
+            {
+                "artist_or_team": ["Artist A", "Artist A", "Artist B"],
+                "listing_price": [100.0, 150.0, 200.0],
+                "event_id": ["e1", "e1", "e2"],
+            }
+        )
 
         cache = ArtistStatsCache()
         cache.fit(df)
@@ -38,11 +37,13 @@ class TestArtistStatsCache:
 
     def test_get_stats_known_artist(self):
         """Test getting stats for known artist."""
-        df = pd.DataFrame({
-            "artist_or_team": ["Taylor Swift", "Taylor Swift"],
-            "listing_price": [200.0, 300.0],
-            "event_id": ["e1", "e1"],
-        })
+        df = pd.DataFrame(
+            {
+                "artist_or_team": ["Taylor Swift", "Taylor Swift"],
+                "listing_price": [200.0, 300.0],
+                "event_id": ["e1", "e1"],
+            }
+        )
 
         cache = ArtistStatsCache()
         cache.fit(df)
@@ -55,11 +56,13 @@ class TestArtistStatsCache:
 
     def test_get_stats_unknown_artist(self):
         """Test getting stats for unknown artist returns global defaults."""
-        df = pd.DataFrame({
-            "artist_or_team": ["Known Artist"],
-            "listing_price": [100.0],
-            "event_id": ["e1"],
-        })
+        df = pd.DataFrame(
+            {
+                "artist_or_team": ["Known Artist"],
+                "listing_price": [100.0],
+                "event_id": ["e1"],
+            }
+        )
 
         cache = ArtistStatsCache()
         cache.fit(df)
@@ -79,11 +82,13 @@ class TestArtistStatsCache:
 
     def test_is_known_artist(self):
         """Test is_known_artist method."""
-        df = pd.DataFrame({
-            "artist_or_team": ["Known"],
-            "listing_price": [100.0],
-            "event_id": ["e1"],
-        })
+        df = pd.DataFrame(
+            {
+                "artist_or_team": ["Known"],
+                "listing_price": [100.0],
+                "event_id": ["e1"],
+            }
+        )
 
         cache = ArtistStatsCache()
         cache.fit(df)
@@ -94,11 +99,13 @@ class TestArtistStatsCache:
 
     def test_premium_ratio(self):
         """Test premium ratio calculation."""
-        df = pd.DataFrame({
-            "artist_or_team": ["Artist"] * 4,
-            "listing_price": [100.0, 150.0, 250.0, 300.0],  # 2 above $200
-            "event_id": ["e1"] * 4,
-        })
+        df = pd.DataFrame(
+            {
+                "artist_or_team": ["Artist"] * 4,
+                "listing_price": [100.0, 150.0, 250.0, 300.0],  # 2 above $200
+                "event_id": ["e1"] * 4,
+            }
+        )
 
         cache = ArtistStatsCache()
         cache.fit(df)
@@ -108,11 +115,13 @@ class TestArtistStatsCache:
 
     def test_save_and_load(self, tmp_path):
         """Test saving and loading cache."""
-        df = pd.DataFrame({
-            "artist_or_team": ["Artist A"],
-            "listing_price": [100.0],
-            "event_id": ["e1"],
-        })
+        df = pd.DataFrame(
+            {
+                "artist_or_team": ["Artist A"],
+                "listing_price": [100.0],
+                "event_id": ["e1"],
+            }
+        )
 
         cache = ArtistStatsCache()
         cache.fit(df)
@@ -165,11 +174,13 @@ class TestEventFeatureExtractor:
     def test_extract_event_type(self):
         """Test event type encoding."""
         extractor = EventFeatureExtractor()
-        df = pd.DataFrame({
-            "event_type": ["CONCERT", "SPORTS", "THEATER"],
-            "city": ["New York", "Chicago", "Miami"],
-            "event_datetime": pd.to_datetime(["2024-06-15", "2024-06-16", "2024-12-25"]),
-        })
+        df = pd.DataFrame(
+            {
+                "event_type": ["CONCERT", "SPORTS", "THEATER"],
+                "city": ["New York", "Chicago", "Miami"],
+                "event_datetime": pd.to_datetime(["2024-06-15", "2024-06-16", "2024-12-25"]),
+            }
+        )
 
         result = extractor.extract(df)
         assert result["event_type_encoded"].tolist() == [0, 1, 2]
@@ -177,11 +188,13 @@ class TestEventFeatureExtractor:
     def test_city_tier(self):
         """Test city tier assignment."""
         extractor = EventFeatureExtractor()
-        df = pd.DataFrame({
-            "city": ["New York", "Seattle", "Small Town"],
-            "event_type": ["CONCERT"] * 3,
-            "event_datetime": pd.to_datetime(["2024-06-15"] * 3),
-        })
+        df = pd.DataFrame(
+            {
+                "city": ["New York", "Seattle", "Small Town"],
+                "event_type": ["CONCERT"] * 3,
+                "event_datetime": pd.to_datetime(["2024-06-15"] * 3),
+            }
+        )
 
         result = extractor.extract(df)
         assert result["city_tier"].tolist() == [1, 2, 3]
@@ -189,15 +202,19 @@ class TestEventFeatureExtractor:
     def test_datetime_features(self):
         """Test datetime feature extraction."""
         extractor = EventFeatureExtractor()
-        df = pd.DataFrame({
-            "event_datetime": pd.to_datetime([
-                "2024-07-13",  # Saturday in July (summer)
-                "2024-12-25",  # Wednesday in December (holiday)
-                "2024-03-15",  # Friday in March
-            ]),
-            "city": ["NYC"] * 3,
-            "event_type": ["CONCERT"] * 3,
-        })
+        df = pd.DataFrame(
+            {
+                "event_datetime": pd.to_datetime(
+                    [
+                        "2024-07-13",  # Saturday in July (summer)
+                        "2024-12-25",  # Wednesday in December (holiday)
+                        "2024-03-15",  # Friday in March
+                    ]
+                ),
+                "city": ["NYC"] * 3,
+                "event_type": ["CONCERT"] * 3,
+            }
+        )
 
         result = extractor.extract(df)
 
@@ -212,12 +229,14 @@ class TestEventFeatureExtractor:
     def test_venue_capacity_bucket(self):
         """Test venue capacity bucketing."""
         extractor = EventFeatureExtractor()
-        df = pd.DataFrame({
-            "venue_capacity": [3000, 10000, 25000, 60000, None],
-            "city": ["NYC"] * 5,
-            "event_type": ["CONCERT"] * 5,
-            "event_datetime": pd.to_datetime(["2024-06-15"] * 5),
-        })
+        df = pd.DataFrame(
+            {
+                "venue_capacity": [3000, 10000, 25000, 60000, None],
+                "city": ["NYC"] * 5,
+                "event_type": ["CONCERT"] * 5,
+                "event_datetime": pd.to_datetime(["2024-06-15"] * 5),
+            }
+        )
 
         result = extractor.extract(df)
         assert result["venue_capacity_bucket"].tolist() == [0, 1, 2, 3, 2]
@@ -251,9 +270,11 @@ class TestSeatingFeatureExtractor:
     def test_seat_zone_encoding(self):
         """Test seat zone encoding from section names."""
         extractor = SeatingFeatureExtractor()
-        df = pd.DataFrame({
-            "section": ["Floor VIP", "Lower Level 100", "Upper Deck", "GA"],
-        })
+        df = pd.DataFrame(
+            {
+                "section": ["Floor VIP", "Lower Level 100", "Upper Deck", "GA"],
+            }
+        )
 
         result = extractor.extract(df)
         assert "seat_zone_encoded" in result.columns
@@ -261,10 +282,12 @@ class TestSeatingFeatureExtractor:
     def test_row_numeric(self):
         """Test row number extraction."""
         extractor = SeatingFeatureExtractor()
-        df = pd.DataFrame({
-            "section": ["Section 100"] * 5,
-            "row": ["1", "10", "AA", "GA", ""],
-        })
+        df = pd.DataFrame(
+            {
+                "section": ["Section 100"] * 5,
+                "row": ["1", "10", "AA", "GA", ""],
+            }
+        )
 
         result = extractor.extract(df)
         assert result["row_numeric"].iloc[0] == 1
@@ -273,9 +296,11 @@ class TestSeatingFeatureExtractor:
     def test_floor_and_ga_detection(self):
         """Test floor and GA detection."""
         extractor = SeatingFeatureExtractor()
-        df = pd.DataFrame({
-            "section": ["Floor A", "GA Pit", "Section 200", "VIP Floor"],
-        })
+        df = pd.DataFrame(
+            {
+                "section": ["Floor A", "GA Pit", "Section 200", "VIP Floor"],
+            }
+        )
 
         result = extractor.extract(df)
         assert result["is_floor"].iloc[0] == 1
@@ -358,12 +383,14 @@ class TestMomentumFeatureExtractor:
     def test_extract_with_precomputed(self):
         """Test extraction with pre-computed columns."""
         extractor = MomentumFeatureExtractor()
-        df = pd.DataFrame({
-            "price_momentum_7d": [0.05, -0.02, 0.10],
-            "price_momentum_30d": [0.10, 0.05, 0.15],
-            "price_vs_initial": [1.1, 0.95, 1.2],
-            "price_volatility": [0.02, 0.05, 0.03],
-        })
+        df = pd.DataFrame(
+            {
+                "price_momentum_7d": [0.05, -0.02, 0.10],
+                "price_momentum_30d": [0.10, 0.05, 0.15],
+                "price_vs_initial": [1.1, 0.95, 1.2],
+                "price_volatility": [0.02, 0.05, 0.03],
+            }
+        )
 
         result = extractor.extract(df)
 
@@ -383,11 +410,13 @@ class TestMomentumFeatureExtractor:
 
     def test_compute_momentum_features(self):
         """Test static method for computing momentum."""
-        df = pd.DataFrame({
-            "event_id": ["e1"] * 5,
-            "listing_price": [100.0, 105.0, 110.0, 108.0, 115.0],
-            "timestamp": pd.date_range("2024-01-01", periods=5, freq="D"),
-        })
+        df = pd.DataFrame(
+            {
+                "event_id": ["e1"] * 5,
+                "listing_price": [100.0, 105.0, 110.0, 108.0, 115.0],
+                "timestamp": pd.date_range("2024-01-01", periods=5, freq="D"),
+            }
+        )
 
         result = MomentumFeatureExtractor.compute_momentum_features(df)
 
@@ -419,17 +448,19 @@ class TestFeaturePipeline:
         """Test fit_transform produces all expected features."""
         pipeline = FeaturePipeline(include_momentum=False)
 
-        df = pd.DataFrame({
-            "artist_or_team": ["Taylor Swift"],
-            "event_type": ["CONCERT"],
-            "city": ["New York"],
-            "event_datetime": pd.to_datetime(["2024-07-15"]),
-            "section": ["Floor VIP"],
-            "row": ["1"],
-            "days_to_event": [14],
-            "listing_price": [500.0],
-            "event_id": ["e1"],
-        })
+        df = pd.DataFrame(
+            {
+                "artist_or_team": ["Taylor Swift"],
+                "event_type": ["CONCERT"],
+                "city": ["New York"],
+                "event_datetime": pd.to_datetime(["2024-07-15"]),
+                "section": ["Floor VIP"],
+                "row": ["1"],
+                "days_to_event": [14],
+                "listing_price": [500.0],
+                "event_id": ["e1"],
+            }
+        )
 
         result = pipeline.fit_transform(df)
 
@@ -443,29 +474,33 @@ class TestFeaturePipeline:
         """Test transform works after fitting."""
         pipeline = FeaturePipeline(include_momentum=False)
 
-        train_df = pd.DataFrame({
-            "artist_or_team": ["Artist A", "Artist B"],
-            "event_type": ["CONCERT", "CONCERT"],
-            "city": ["NYC", "LA"],
-            "event_datetime": pd.to_datetime(["2024-07-15", "2024-07-16"]),
-            "section": ["Floor", "Upper"],
-            "row": ["1", "10"],
-            "days_to_event": [14, 30],
-            "listing_price": [100.0, 200.0],
-            "event_id": ["e1", "e2"],
-        })
+        train_df = pd.DataFrame(
+            {
+                "artist_or_team": ["Artist A", "Artist B"],
+                "event_type": ["CONCERT", "CONCERT"],
+                "city": ["NYC", "LA"],
+                "event_datetime": pd.to_datetime(["2024-07-15", "2024-07-16"]),
+                "section": ["Floor", "Upper"],
+                "row": ["1", "10"],
+                "days_to_event": [14, 30],
+                "listing_price": [100.0, 200.0],
+                "event_id": ["e1", "e2"],
+            }
+        )
 
-        test_df = pd.DataFrame({
-            "artist_or_team": ["Artist A"],
-            "event_type": ["CONCERT"],
-            "city": ["NYC"],
-            "event_datetime": pd.to_datetime(["2024-08-01"]),
-            "section": ["Floor"],
-            "row": ["5"],
-            "days_to_event": [7],
-            "listing_price": [150.0],
-            "event_id": ["e3"],
-        })
+        test_df = pd.DataFrame(
+            {
+                "artist_or_team": ["Artist A"],
+                "event_type": ["CONCERT"],
+                "city": ["NYC"],
+                "event_datetime": pd.to_datetime(["2024-08-01"]),
+                "section": ["Floor"],
+                "row": ["5"],
+                "days_to_event": [7],
+                "listing_price": [150.0],
+                "event_id": ["e3"],
+            }
+        )
 
         pipeline.fit(train_df)
         result = pipeline.transform(test_df)
