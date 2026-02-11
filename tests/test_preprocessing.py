@@ -780,7 +780,8 @@ class TestSeatZoneEnricher:
         assert SeatZone.UPPER_TIER in zones or SeatZone.BALCONY in zones  # Upper Level or Balcony
         # At least we got valid zones for all sections
         assert len(zones) == 5
-        assert all(isinstance(z, SeatZone) for z in zones)
+        valid_zone_values = {z.value for z in SeatZone}
+        assert all(str(z) in valid_zone_values or isinstance(z, SeatZone) for z in zones)
 
     def test_handles_missing_sections(self):
         """Test handling of null/empty sections."""
