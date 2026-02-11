@@ -5,14 +5,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from ticket_price_predictor.config import get_ml_config
 
 _config = get_ml_config()
 
 
-class PopularityTier(str, Enum):
+class PopularityTier(StrEnum):
     """Artist popularity tiers."""
 
     HIGH = "high"

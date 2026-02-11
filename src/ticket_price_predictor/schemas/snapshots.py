@@ -1,14 +1,14 @@
 """Data schemas for event metadata and price snapshots."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Self
 
 import pyarrow as pa
 from pydantic import BaseModel, Field, model_validator
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Type of event."""
 
     CONCERT = "concert"
@@ -16,7 +16,7 @@ class EventType(str, Enum):
     THEATER = "theater"
 
 
-class SeatZone(str, Enum):
+class SeatZone(StrEnum):
     """Standardized seat zone categories for cross-venue learning."""
 
     FLOOR_VIP = "floor_vip"

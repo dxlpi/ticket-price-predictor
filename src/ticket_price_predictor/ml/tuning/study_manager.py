@@ -128,7 +128,7 @@ class StudyManager:
     def get_best_params(self) -> dict[str, Any]:
         """Get best hyperparameters from study."""
         study = self.create_study()
-        return study.best_trial.params
+        return dict(study.best_trial.params)
 
     def get_top_k_trials(self, k: int = 5) -> list[optuna.trial.FrozenTrial]:
         """Get top K trials by value."""

@@ -1,14 +1,14 @@
 """ML schemas for predictions and training metrics."""
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 import pyarrow as pa
 from pydantic import BaseModel, Field
 
 
-class PriceDirection(str, Enum):
+class PriceDirection(StrEnum):
     """Predicted price movement direction."""
 
     UP = "UP"

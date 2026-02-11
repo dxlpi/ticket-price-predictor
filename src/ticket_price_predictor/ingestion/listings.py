@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,7 @@ from ticket_price_predictor.scrapers import (
 from ticket_price_predictor.storage import ListingRepository
 
 
-class DataSource(str, Enum):
+class DataSource(StrEnum):
     """Supported ticket marketplace data sources."""
 
     STUBHUB = "stubhub"

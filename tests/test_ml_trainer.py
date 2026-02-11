@@ -190,13 +190,13 @@ class TestModelTrainer:
                 "artist_or_team": np.random.choice(["Artist A", "Artist B"], n),
                 "event_type": ["CONCERT"] * n,
                 "city": np.random.choice(["New York", "Los Angeles"], n),
-                "event_datetime": pd.date_range("2024-01-01", periods=n, freq="6H"),
+                "event_datetime": pd.date_range("2024-01-01", periods=n, freq="6h"),
                 "section": np.random.choice(["Floor", "Lower Level", "Upper Level"], n),
                 "row": np.random.choice(["1", "5", "10", "20"], n),
                 "days_to_event": np.random.randint(1, 60, n),
                 "listing_price": 100 + np.random.randn(n) * 30,
                 "event_id": [f"e{i % 20}" for i in range(n)],
-                "timestamp": pd.date_range("2024-01-01", periods=n, freq="6H"),
+                "timestamp": pd.date_range("2024-01-01", periods=n, freq="6h"),
             }
         )
 
