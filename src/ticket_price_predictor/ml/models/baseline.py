@@ -5,6 +5,7 @@ from typing import Any
 
 import joblib
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import Ridge
@@ -144,7 +145,7 @@ class BaselineModel(PriceModel):
 
         return self
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(self, X: pd.DataFrame) -> npt.NDArray[Any]:
         """Make predictions.
 
         Args:

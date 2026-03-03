@@ -6,6 +6,7 @@ from typing import Any, cast
 import joblib
 import lightgbm as lgb
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from ticket_price_predictor.ml.models.base import PriceModel
@@ -134,7 +135,7 @@ class LightGBMModel(PriceModel):
         y_train: pd.Series,
         X_val: pd.DataFrame | None = None,
         y_val: pd.Series | None = None,
-        sample_weight: np.ndarray | None = None,
+        sample_weight: npt.NDArray[Any] | None = None,
     ) -> "LightGBMModel":
         """Fit the model.
 
@@ -202,7 +203,7 @@ class LightGBMModel(PriceModel):
 
         return self
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(self, X: pd.DataFrame) -> npt.NDArray[Any]:
         """Make predictions.
 
         Args:
@@ -340,7 +341,7 @@ class QuantileLightGBMModel(PriceModel):
         y_train: pd.Series,
         X_val: pd.DataFrame | None = None,
         y_val: pd.Series | None = None,
-        sample_weight: np.ndarray | None = None,
+        sample_weight: npt.NDArray[Any] | None = None,
     ) -> "QuantileLightGBMModel":
         """Fit three quantile models.
 
@@ -398,7 +399,7 @@ class QuantileLightGBMModel(PriceModel):
         self._fitted = True
         return self
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(self, X: pd.DataFrame) -> npt.NDArray[Any]:
         """Make median predictions.
 
         Args:
@@ -414,7 +415,7 @@ class QuantileLightGBMModel(PriceModel):
 
     def predict_with_uncertainty(
         self, X: pd.DataFrame
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]]:
         """Make predictions with 95% confidence intervals.
 
         Args:

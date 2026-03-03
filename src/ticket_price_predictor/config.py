@@ -164,6 +164,9 @@ class Settings(BaseSettings):
     # Setlist.fm API (for historical concert data)
     setlistfm_api_key: str = ""
 
+    # Last.fm API (for artist popularity data)
+    lastfm_api_key: str = ""
+
     # Data storage
     data_dir: Path = Path("./data")
 

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -45,7 +45,7 @@ class PriceModel(ABC):
         ...
 
     @abstractmethod
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(self, X: pd.DataFrame) -> npt.NDArray[Any]:
         """Make predictions.
 
         Args:
@@ -58,7 +58,7 @@ class PriceModel(ABC):
 
     def predict_with_uncertainty(
         self, X: pd.DataFrame
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]]:
         """Make predictions with uncertainty estimates.
 
         Default implementation returns point predictions with no uncertainty.

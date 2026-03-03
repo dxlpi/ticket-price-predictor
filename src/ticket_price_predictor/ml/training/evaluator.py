@@ -1,8 +1,10 @@
 """Model evaluation utilities."""
 
 from datetime import datetime
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from ticket_price_predictor.ml.models.base import PriceModel
@@ -14,8 +16,8 @@ class ModelEvaluator:
 
     @staticmethod
     def compute_metrics(
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
+        y_true: npt.NDArray[Any],
+        y_pred: npt.NDArray[Any],
     ) -> dict[str, float]:
         """Compute regression metrics.
 
@@ -51,9 +53,9 @@ class ModelEvaluator:
 
     @staticmethod
     def compute_direction_accuracy(
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-        y_prev: np.ndarray | None = None,
+        y_true: npt.NDArray[Any],
+        y_pred: npt.NDArray[Any],
+        y_prev: npt.NDArray[Any] | None = None,
     ) -> float:
         """Compute accuracy of direction predictions.
 
@@ -77,8 +79,8 @@ class ModelEvaluator:
     @staticmethod
     def evaluate_model(
         model: PriceModel,
-        X_test: np.ndarray,
-        y_test: np.ndarray,
+        X_test: npt.NDArray[Any],
+        y_test: npt.NDArray[Any],
         n_train: int = 0,
         n_val: int = 0,
         training_time: float = 0.0,
