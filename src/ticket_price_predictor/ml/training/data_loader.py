@@ -70,6 +70,7 @@ class DataLoader:
                 "venue_name": listing.venue_name,
                 "city": listing.city,
                 "event_datetime": listing.event_datetime,
+                "timestamp": listing.timestamp,
                 "section": listing.section,
                 "row": listing.row,
                 "seat_from": listing.seat_from,

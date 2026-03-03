@@ -13,22 +13,59 @@ Usage:
 """
 
 import asyncio
+import json
 from datetime import datetime
 from pathlib import Path
 
-from ticket_price_predictor.ingestion import DataSource, ListingCollector
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from ticket_price_predictor.popularity import PopularityService
 from ticket_price_predictor.storage import ListingRepository
 
+# Tier-based event allocation (events per artist per collection run)
+TIER_EVENT_LIMITS = {
+    "stadium": 5,
+    "arena": 3,
+    "theater": 2,
+    "emerging": 1,
+}
+
+WATCHLIST_PATH = Path("data/artist_watchlist.json")
+
+
+def load_artist_watchlist(path: Path = WATCHLIST_PATH) -> dict[str, list[str]]:
+    """Load artist watchlist from JSON config.
+
+    Args:
+        path: Path to watchlist JSON file
+
+    Returns:
+        Dict mapping tier name to list of artist names
+    """
+    if not path.exists():
+        print(f"  Warning: watchlist not found at {path}, using empty list")
+        return {}
+
+    with open(path) as f:
+        data = json.load(f)
+
+    # Filter out metadata keys (start with _)
+    return {k: v for k, v in data.items() if not k.startswith("_")}
+
 
 async def get_popular_events(
-    max_events: int = 20,
+    max_events: int = 50,
     popularity_service: PopularityService | None = None,
 ) -> list[dict]:
     """Fetch top popular events from Vivid Seats using search.
 
     Uses search_events() for each performer instead of navigating to
     performer pages, which VividSeats manipulates for scrapers.
+
+    Artists are loaded from data/artist_watchlist.json organized by
+    popularity tier. Each tier has a different event allocation.
 
     Args:
         max_events: Maximum number of events to return
@@ -41,49 +78,43 @@ async def get_popular_events(
 
     print("Fetching popular performers and their events...")
 
-    # Pre-defined list of popular performers to search
-    # These are known high-ticket-volume artists
-    popular_performers = [
-        "Bruno Mars",
-        "Lady Gaga",
-        "Morgan Wallen",
-        "BTS",
-        "Taylor Swift",
-        "Beyonce",
-        "The Eagles",
-        "Chris Stapleton",
-        "Ariana Grande",
-        "Harry Styles",
-        "Backstreet Boys",
-        "George Strait",
-        "Megan Moroney",
-        "Olivia Dean",
-        "Rush",
-    ]
+    # Load artists from config file, organized by tier
+    watchlist = load_artist_watchlist()
 
-    # Use popularity service to rank if available
+    if not watchlist:
+        print("  No artists in watchlist!")
+        return []
+
+    # Build flat performer list with tier-based event limits
+    performer_configs: list[tuple[str, int]] = []
+    for tier, artists in watchlist.items():
+        events_per_artist = TIER_EVENT_LIMITS.get(tier, 1)
+        for artist in artists:
+            performer_configs.append((artist, events_per_artist))
+
+    total_artists = len(performer_configs)
+    print(f"  Loaded {total_artists} artists from watchlist across {len(watchlist)} tiers")
+
+    # Use popularity service to re-rank within tiers if available
     if popularity_service:
-        ranked = popularity_service.rank_performers(popular_performers)
-        performer_names = [p.name for p in ranked]
-        tier_lookup = {p.name.lower(): p.tier_allocation for p in ranked}
-        print(f"  Using popularity-ranked selection: {len(performer_names)} performers")
-    else:
-        performer_names = popular_performers[:10]
-        tier_lookup = {}
+        all_names = [name for name, _ in performer_configs]
+        ranked = popularity_service.rank_performers(all_names)
+        # Rebuild configs with ranked order but keep tier-based limits
+        tier_limits = {name.lower(): limit for name, limit in performer_configs}
+        performer_configs = [
+            (p.name, tier_limits.get(p.name.lower(), 1)) for p in ranked
+        ]
+        print(f"  Re-ranked by popularity: {len(performer_configs)} performers")
 
     events = []
 
     # Use single browser session for all searches
     async with VividSeatsScraper(headless=True, delay_seconds=2.0) as scraper:
-        for performer_name in performer_names:
+        for performer_name, events_to_collect in performer_configs:
             if len(events) >= max_events:
                 break
 
-            # Get tier-based event allocation (default to 2 if no popularity data)
-            events_to_collect = tier_lookup.get(performer_name.lower(), 2)
-
             try:
-                # Use search which works correctly
                 scraped_events = await scraper.search_events(
                     performer_name,
                     max_results=events_to_collect,
@@ -102,6 +133,7 @@ async def get_popular_events(
                         "min_price": e.min_price,
                         "ticket_count": e.ticket_count,
                         "performer": performer_name,
+                        "event_datetime": e.event_datetime,
                     })
 
                 print(f"  {performer_name}: {len(scraped_events)} events, added {min(len(scraped_events), events_to_collect)}")
@@ -112,15 +144,77 @@ async def get_popular_events(
     return events[:max_events]
 
 
+def create_snapshots_from_listings(
+    listings: list,
+    event_id: str,
+    timestamp: datetime,
+    days_to_event: int,
+) -> list:
+    """Aggregate listings into zone-level price snapshots.
+
+    Groups listings by normalized seat zone and computes
+    min/avg/max price and inventory count per zone.
+
+    Args:
+        listings: List of TicketListing objects
+        event_id: Event identifier
+        timestamp: Snapshot capture time
+        days_to_event: Days until event
+
+    Returns:
+        List of PriceSnapshot objects
+    """
+    from collections import defaultdict
+
+    from ticket_price_predictor.normalization import SeatZoneMapper
+    from ticket_price_predictor.schemas import PriceSnapshot
+
+    mapper = SeatZoneMapper()
+
+    # Group prices by zone
+    zone_prices: dict[str, list[float]] = defaultdict(list)
+    zone_quantities: dict[str, int] = defaultdict(int)
+
+    for listing in listings:
+        zone = mapper.normalize_zone_name(listing.section)
+        zone_prices[zone.value].append(listing.listing_price)
+        zone_quantities[zone.value] += listing.quantity
+
+    # Create snapshots
+    snapshots = []
+    for zone_value, prices in zone_prices.items():
+        if not prices:
+            continue
+
+        from ticket_price_predictor.schemas import SeatZone
+
+        snapshots.append(
+            PriceSnapshot(
+                event_id=event_id,
+                seat_zone=SeatZone(zone_value),
+                timestamp=timestamp,
+                price_min=min(prices),
+                price_avg=sum(prices) / len(prices),
+                price_max=max(prices),
+                inventory_remaining=zone_quantities[zone_value],
+                days_to_event=max(0, days_to_event),
+            )
+        )
+
+    return snapshots
+
+
 async def collect_listings_for_events(
     events: list[dict],
     data_dir: Path,
     max_listings_per_event: int = 100,
 ) -> dict:
-    """Collect listings for a list of events.
+    """Collect listings for a list of events and create price snapshots.
 
     Uses a SINGLE browser session for all events to avoid repeated
-    browser launches and reduce timeouts.
+    browser launches and reduce timeouts. After collecting listings,
+    aggregates them into zone-level price snapshots for longitudinal
+    tracking.
 
     Args:
         events: List of event dictionaries
@@ -134,15 +228,17 @@ async def collect_listings_for_events(
 
     from ticket_price_predictor.schemas import ScrapedEvent, create_listing_from_scraped
     from ticket_price_predictor.scrapers import VividSeatsScraper
-    from ticket_price_predictor.storage import ListingRepository
+    from ticket_price_predictor.storage import ListingRepository, SnapshotRepository
 
     repository = ListingRepository(data_dir)
+    snapshot_repo = SnapshotRepository(data_dir)
     timestamp = datetime.now(UTC)
 
     stats = {
         "events_attempted": len(events),
         "events_succeeded": 0,
         "total_listings": 0,
+        "total_snapshots": 0,
         "errors": [],
     }
 
@@ -179,6 +275,17 @@ async def collect_listings_for_events(
 
                     stats["events_succeeded"] += 1
                     stats["total_listings"] += saved
+
+                    # Create and save zone-level price snapshots
+                    if listings:
+                        days_to = listings[0].days_to_event
+                        snapshots = create_snapshots_from_listings(
+                            listings, event.get("id", ""), timestamp, days_to
+                        )
+                        if snapshots:
+                            snap_saved = snapshot_repo.save_snapshots(snapshots)
+                            stats["total_snapshots"] += snap_saved
+
                     if saved > 0:
                         print(f"    Collected {saved} new listings (from {len(scraped_listings)} found)")
                     else:
@@ -196,17 +303,33 @@ async def collect_listings_for_events(
 
 async def main() -> None:
     """Main entry point."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Monitor popular event ticket prices")
+    parser.add_argument(
+        "--urgent",
+        action="store_true",
+        help="Only collect events within 14 days (for high-frequency runs)",
+    )
+    parser.add_argument(
+        "--max-events",
+        type=int,
+        default=100,
+        help="Maximum events to collect (default: 100)",
+    )
+    args = parser.parse_args()
+
     data_dir = Path("data")
     max_listings_per_event = 100
 
     # Initialize popularity service
     pop_service = PopularityService()
 
-    # Default max events (actual count determined by tier allocations in get_popular_events)
-    max_events = 30
+    max_events = args.max_events
+    mode = "URGENT (≤14 days)" if args.urgent else "FULL"
 
     print("=" * 60)
-    print("POPULAR EVENTS MONITOR")
+    print(f"POPULAR EVENTS MONITOR [{mode}]")
     print("=" * 60)
     print(f"Timestamp: {datetime.now().isoformat()}")
     print(f"Max events: {max_events}")
@@ -218,7 +341,19 @@ async def main() -> None:
         max_events=max_events,
         popularity_service=pop_service,
     )
-    print(f"\nFound {len(events)} popular events to monitor:")
+    # Filter to near-term events if --urgent
+    if args.urgent:
+        from datetime import UTC, timedelta
+
+        cutoff = datetime.now(UTC) + timedelta(days=14)
+        before_count = len(events)
+        events = [
+            e for e in events
+            if e.get("event_datetime") and e["event_datetime"] < cutoff
+        ]
+        print(f"\nUrgent filter: {before_count} → {len(events)} events (within 14 days)")
+
+    print(f"\nFound {len(events)} events to monitor:")
     for i, event in enumerate(events, 1):
         price_str = f"${event['min_price']}" if event['min_price'] else "N/A"
         performer = event.get('performer', event.get('category', 'Unknown'))
@@ -246,6 +381,7 @@ async def main() -> None:
     print(f"Events attempted: {stats['events_attempted']}")
     print(f"Events succeeded: {stats['events_succeeded']}")
     print(f"Total listings collected: {stats['total_listings']}")
+    print(f"Total snapshots saved: {stats.get('total_snapshots', 0)}")
 
     if stats["errors"]:
         print(f"\nErrors ({len(stats['errors'])}):")

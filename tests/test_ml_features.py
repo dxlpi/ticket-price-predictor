@@ -1,6 +1,7 @@
 """Tests for ML feature extractors."""
 
 import pandas as pd
+import pytest
 
 from ticket_price_predictor.ml.features.artist_stats import ArtistStats, ArtistStatsCache
 from ticket_price_predictor.ml.features.event import EventFeatureExtractor
@@ -513,8 +514,105 @@ class TestFeaturePipeline:
         pipeline_no_momentum = FeaturePipeline(include_momentum=False)
         pipeline_with_momentum = FeaturePipeline(include_momentum=True)
 
-        # Without momentum: performer(7) + event(8) + seating(6) + timeseries(6) = 27
-        assert len(pipeline_no_momentum.feature_names) == 27
+        # Without momentum: performer(8) + event(8) + seating(6) + timeseries(6)
+        #   + regional(7) + popularity(6) + listing(4) + venue(3) + event_pricing(5)
+        #   + interactions(6) = 59
+        assert len(pipeline_no_momentum.feature_names) == 59
 
-        # With momentum: 27 + 4 momentum features = 31
-        assert len(pipeline_with_momentum.feature_names) == 31
+        # With momentum: 59 + 4 momentum features = 63
+        assert len(pipeline_with_momentum.feature_names) == 63
+
+    def test_feature_count_without_new_extractors(self):
+        """Test feature count when new extractors are disabled."""
+        pipeline = FeaturePipeline(
+            include_momentum=False,
+            include_popularity=False,
+            include_regional=False,
+        )
+        # performer(8) + event(8) + seating(6) + timeseries(6) + listing(4) + venue(3)
+        #   + event_pricing(5) + interactions(6) = 46
+        assert len(pipeline.feature_names) == 46
+
+
+class TestEventPricingLOO:
+    """Tests for LOO (Leave-One-Out) encoding in EventPricingFeatureExtractor."""
+
+    def _make_extractor(self, train_df: pd.DataFrame):
+        from ticket_price_predictor.ml.features.event_pricing import (
+            EventPricingFeatureExtractor,
+        )
+
+        ext = EventPricingFeatureExtractor()
+        ext.fit(train_df)
+        return ext
+
+    def _make_train_df(self) -> pd.DataFrame:
+        """Three listings in event e1, one listing in event e2."""
+        return pd.DataFrame(
+            {
+                "event_id": ["e1", "e1", "e1", "e2"],
+                "artist_or_team": ["Artist A"] * 4,
+                "listing_price": [100.0, 200.0, 300.0, 150.0],
+                "section": ["Floor", "Floor", "Upper", "Floor"],
+            }
+        )
+
+    def test_loo_passthrough_for_unseen_events(self):
+        """Val/test rows (event_id not in training set) are unaffected by LOO.
+
+        For rows whose event_id was never seen during fit(), the LOO branch
+        cannot fire (the event_id is absent from _event_price_sums). The
+        returned event_median_price must therefore equal the non-LOO path,
+        which falls back to artist-level or global stats.
+        """
+        train_df = self._make_train_df()
+        ext = self._make_extractor(train_df)
+
+        # Unseen event — LOO cannot fire regardless of listing_price presence
+        unseen_row = pd.DataFrame(
+            {
+                "event_id": ["e99"],
+                "artist_or_team": ["Artist A"],
+                "listing_price": [999.0],
+                "section": ["Floor"],
+            }
+        )
+
+        result_with_price = ext.extract(unseen_row)
+
+        # Extract again without listing_price to get the "pure" non-LOO value
+        unseen_no_price = unseen_row.drop(columns=["listing_price"])
+        result_no_price = ext.extract(unseen_no_price)
+
+        # Both paths must produce identical event_median_price
+        assert result_with_price["event_median_price"].iloc[0] == pytest.approx(
+            result_no_price["event_median_price"].iloc[0]
+        )
+
+    def test_loo_adjusts_training_rows(self):
+        """LOO encoding produces different event_median_price for training rows with n > 1.
+
+        When a row's event_id IS in the training set and n_group > 1, the LOO
+        branch fires and removes the row's own price from the event mean.
+        The result must differ from the naively-smoothed event median (non-LOO path),
+        confirming the adjustment is non-trivial.
+        """
+        train_df = self._make_train_df()
+        ext = self._make_extractor(train_df)
+
+        # Extract with listing_price — LOO fires for e1 rows (n=3 > 1)
+        result_loo = ext.extract(train_df)
+
+        # Extract without listing_price — LOO branch skipped (pd.isna check fails)
+        train_no_price = train_df.drop(columns=["listing_price"])
+        result_no_loo = ext.extract(train_no_price)
+
+        # e1 rows (index 0-2): LOO must differ from non-LOO
+        for i in range(3):
+            assert result_loo["event_median_price"].iloc[i] != pytest.approx(
+                result_no_loo["event_median_price"].iloc[i]
+            ), f"Row {i} in event e1 (n=3): LOO should differ from non-LOO"
+
+        # e2 row (index 3, n=1): LOO falls back to global mean — may equal non-LOO
+        # We don't assert equality here, just confirm it doesn't crash
+        assert not pd.isna(result_loo["event_median_price"].iloc[3])

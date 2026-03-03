@@ -37,19 +37,23 @@ ENV/
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 
 # Environment
 .env
 .env.local
 
-# Data (tracked by DVC)
+# Data
 /data/raw/*
 !/data/raw/.gitkeep
 /data/processed/*
 !/data/processed/.gitkeep
+/data/models/
+/data/optuna/
+/data/.cache/
 
-# DVC
-/data/*.dvc
+# Logs
+logs/
 
 # OS
 .DS_Store
@@ -57,3 +61,12 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Claude Code / OMC
+.omc/
+.claude/worktrees/
+.claude/settings.local.json
+
+# Coral (device-local files)
+.claude/coral/*
+!.claude/coral/kb/

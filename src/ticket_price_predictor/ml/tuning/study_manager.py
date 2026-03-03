@@ -1,13 +1,14 @@
 """Optuna study management and persistence."""
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 import optuna
 
-from ticket_price_predictor.ml.training.splitter import DataSplit
-from ticket_price_predictor.ml.tuning.objective import create_objective
+from ticket_price_predictor.ml.training.splitter import DataSplit, RawDataSplit
+from ticket_price_predictor.ml.tuning.objective import create_objective, create_raw_objective
 
 
 class StudyManager:
@@ -19,6 +20,11 @@ class StudyManager:
         storage_dir: Path = Path("data/optuna/studies"),
         trials_dir: Path = Path("data/optuna/trials"),
     ):
+        if not re.match(r"^[a-zA-Z0-9_\-]+$", study_name):
+            raise ValueError(
+                f"Invalid study_name '{study_name}': "
+                "must contain only alphanumeric characters, hyphens, and underscores"
+            )
         self.study_name = study_name
         self.storage_dir = Path(storage_dir)
         self.trials_dir = Path(trials_dir)
@@ -96,6 +102,60 @@ class StudyManager:
 
         return study
 
+    def optimize_raw(
+        self,
+        raw_split: RawDataSplit,
+        n_trials: int = 50,
+        timeout: int | None = None,
+        penalize_dominance: bool = True,
+        n_jobs: int = 1,
+        target_col: str = "listing_price",
+        pipeline_kwargs: dict[str, Any] | None = None,
+    ) -> optuna.Study:
+        """Run optimization with leak-free raw-data objective.
+
+        Re-extracts features per trial, enabling smoothing factor tuning.
+        Evaluates in dollar-space instead of log-space.
+
+        Args:
+            raw_split: Raw data split (before feature extraction)
+            n_trials: Number of trials
+            timeout: Max time in seconds
+            penalize_dominance: Add penalty for feature dominance
+            n_jobs: Parallel trials
+            target_col: Target column name
+            pipeline_kwargs: Base kwargs for FeaturePipeline
+        """
+        study = self.create_study()
+
+        objective = create_raw_objective(
+            raw_split=raw_split,
+            target_col=target_col,
+            pipeline_kwargs=pipeline_kwargs,
+            penalize_dominance=penalize_dominance,
+        )
+
+        print(f"Starting leak-free optimization: {self.study_name}")
+        print(f"  Trials: {n_trials}")
+        print("  Dollar-space evaluation: enabled")
+        print("  Smoothing factor tuning: enabled")
+        print(f"  Penalize dominance: {penalize_dominance}")
+        print(f"  Storage: {self.storage}")
+
+        study.optimize(
+            objective,
+            n_trials=n_trials,
+            timeout=timeout,
+            n_jobs=n_jobs,
+            show_progress_bar=True,
+        )
+
+        print("\nOptimization complete!")
+        print(f"  Best trial: {study.best_trial.number}")
+        print(f"  Best MAE: ${study.best_value:.2f}")
+
+        return study
+
     def save_trial_metadata(self, trial: optuna.trial.FrozenTrial) -> Path:
         """Save detailed trial metadata to JSON."""
 
@@ -105,7 +165,7 @@ class StudyManager:
         metadata = {
             "trial_id": trial.number,
             "status": trial.state.name,
-            "value": trial.value if trial.value else None,
+            "value": trial.value if trial.value is not None else None,
             "params": trial.params,
             "user_attrs": trial.user_attrs,
             "datetime_start": (trial.datetime_start.isoformat() if trial.datetime_start else None),

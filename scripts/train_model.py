@@ -10,11 +10,15 @@ Usage:
 
 import argparse
 from pathlib import Path
+from typing import Any
 
-import optuna
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from ticket_price_predictor.ml.training.data_loader import DataLoader
 from ticket_price_predictor.ml.training.trainer import ModelTrainer
+from ticket_price_predictor.popularity.service import PopularityService
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,6 +88,27 @@ def parse_args() -> argparse.Namespace:
         help="Enable preprocessing pipeline before training",
     )
 
+    parser.add_argument(
+        "--cv",
+        action="store_true",
+        help="Use temporal cross-validation instead of single split",
+    )
+
+    parser.add_argument(
+        "--n-folds",
+        type=int,
+        default=5,
+        help="Number of CV folds (default: 5, requires --cv)",
+    )
+
+    parser.add_argument(
+        "--sample-weight",
+        type=str,
+        choices=["none", "inverse_artist_freq", "recency"],
+        default="none",
+        help="Sample weighting strategy (default: none)",
+    )
+
     return parser.parse_args()
 
 
@@ -104,6 +129,8 @@ def main() -> None:
     # Load hyperparameters from Optuna study if specified
     params = None
     if args.from_study:
+        import optuna
+
         print(f"\nLoading hyperparameters from study: {args.from_study}")
         storage = f"sqlite:///data/optuna/studies/{args.from_study}.db"
         study = optuna.load_study(study_name=args.from_study, storage=storage)
@@ -119,8 +146,33 @@ def main() -> None:
             print(f"  Using best trial #{trial.number}")
             print(f"  Best MAE: ${trial.value:.2f}")
 
-        params = trial.params
-        print(f"  Loaded {len(params)} hyperparameters")
+        raw_params = dict(trial.params)
+
+        # Separate pipeline smoothing factors from model hyperparameters
+        pipeline_smoothing_keys = {
+            "event_pricing_smoothing",
+            "artist_stats_smoothing",
+            "regional_smoothing",
+        }
+        smoothing = {k: raw_params.pop(k) for k in pipeline_smoothing_keys if k in raw_params}
+
+        # Handle meta params (use_huber → objective/alpha, dart_n_estimators → n_estimators)
+        use_huber = raw_params.pop("use_huber", False)
+        if use_huber:
+            raw_params["objective"] = "huber"
+            huber_alpha = raw_params.pop("huber_alpha", 1.0)
+            raw_params["alpha"] = huber_alpha
+        else:
+            raw_params.pop("huber_alpha", None)
+
+        dart_n_est = raw_params.pop("dart_n_estimators", None)
+        if dart_n_est is not None and raw_params.get("boosting_type") == "dart":
+            raw_params["n_estimators"] = dart_n_est
+
+        params = raw_params
+        print(f"  Loaded {len(params)} model hyperparameters")
+        if smoothing:
+            print(f"  Smoothing factors: {smoothing}")
         print()
 
     print()
@@ -141,6 +193,30 @@ def main() -> None:
     print(f"  - Price range: ${summary['price_min']:.2f} - ${summary['price_max']:.2f}")
     print()
 
+    # Initialize popularity service (YouTube Music + Last.fm)
+    popularity_service = PopularityService()
+
+    # Build pipeline_kwargs from Optuna smoothing factors (if loaded from study)
+    study_pipeline_kwargs: dict[str, Any] | None = None
+    if args.from_study and smoothing:
+        extractor_params: dict[str, dict[str, Any]] = {}
+        if "event_pricing_smoothing" in smoothing:
+            extractor_params["EventPricingFeatureExtractor"] = {
+                "SMOOTHING_FACTOR": smoothing["event_pricing_smoothing"],
+            }
+        if "artist_stats_smoothing" in smoothing:
+            extractor_params["PerformerFeatureExtractor"] = {
+                "artist_stats_smoothing": smoothing["artist_stats_smoothing"],
+            }
+        if "regional_smoothing" in smoothing:
+            extractor_params["RegionalPopularityFeatureExtractor"] = {
+                "regional_smoothing": smoothing["regional_smoothing"],
+            }
+        study_pipeline_kwargs = {
+            "extractor_params": extractor_params,
+            "include_listing": False,
+        }
+
     # Train model
     trainer = ModelTrainer(
         model_type=args.model,  # type: ignore
@@ -149,26 +225,48 @@ def main() -> None:
 
     test_ratio = 1.0 - args.train_ratio - args.val_ratio
 
-    # Use train_with_params if we have custom params, otherwise use regular train
-    if params:
-        # Need to create split and use train_with_params
-        from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
-        from ticket_price_predictor.ml.training.splitter import TimeBasedSplitter
+    if args.cv:
+        from ticket_price_predictor.ml.training.splitter import TemporalGroupCV
 
-        print("Extracting features...")
-        pipeline = FeaturePipeline(include_momentum=True)
-        X = pipeline.fit_transform(df)
-        y = df["listing_price"]
+        print(f"\nUsing temporal cross-validation with {args.n_folds} folds")
+        cv = TemporalGroupCV(n_folds=args.n_folds)
+        folds = cv.split(df)
+        print(f"Generated {len(folds)} folds")
 
-        print("Splitting data...")
-        splitter = TimeBasedSplitter(
-            train_ratio=args.train_ratio,
-            val_ratio=args.val_ratio,
-            test_ratio=test_ratio,
-        )
-        split = splitter.split(X, y, raw_df=df)
+        fold_metrics = []
+        for i, fold in enumerate(folds):
+            print(f"\n{'=' * 40}")
+            print(f"FOLD {i + 1}/{len(folds)}")
+            print(f"{'=' * 40}")
+            fold_trainer = ModelTrainer(
+                model_type=args.model,  # type: ignore
+                model_version=f"{args.version}_fold{i + 1}",
+            )
+            m = fold_trainer.train(
+                fold.train_df,
+                train_ratio=0.85,
+                val_ratio=0.15,
+                test_ratio=0.0,
+                params=params,
+                popularity_service=popularity_service,
+                pipeline_kwargs=study_pipeline_kwargs,
+            )
+            fold_metrics.append(m)
 
-        metrics = trainer.train_with_params(split, params)
+        # Summary
+        import numpy as np
+
+        maes = [m.mae for m in fold_metrics]
+        print(f"\n{'=' * 60}")
+        print("CROSS-VALIDATION SUMMARY")
+        print(f"{'=' * 60}")
+        print(f"  Mean MAE:  ${np.mean(maes):.2f} (+/- ${np.std(maes):.2f})")
+        print(f"  Best MAE:  ${np.min(maes):.2f}")
+        print(f"  Worst MAE: ${np.max(maes):.2f}")
+
+        # Use last fold's trainer for saving
+        trainer = fold_trainer  # noqa: F841
+        metrics = fold_metrics[-1]
     else:
         metrics = trainer.train(
             df,
@@ -176,6 +274,9 @@ def main() -> None:
             val_ratio=args.val_ratio,
             test_ratio=test_ratio,
             preprocess=args.preprocess,
+            params=params,
+            popularity_service=popularity_service,
+            pipeline_kwargs=study_pipeline_kwargs,
         )
 
     # Save model

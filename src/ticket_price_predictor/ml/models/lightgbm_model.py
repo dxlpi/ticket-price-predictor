@@ -16,24 +16,83 @@ class LightGBMModel(PriceModel):
 
     Advanced model with native handling of missing values,
     categorical features, and built-in feature importance.
+
+    Supported objectives:
+        - "regression" (default): L2 loss, optimizes RMSE
+        - "regression_l1": L1 loss, optimizes MAE
+        - "huber": Huber loss, robust to outliers. Controlled by the
+          "alpha" parameter which sets the transition point between
+          L2 (near zero) and L1 (large errors). Because we train on
+          log1p-transformed targets, alpha operates in LOG-SPACE:
+          alpha=1.0 means errors up to ~1 log-unit (~2.7x price
+          difference) use L2, larger errors use L1. Typical useful
+          range: 0.5–2.0.
+        - "quantile": Quantile regression (use QuantileLightGBMModel)
     """
 
+    # Default params: DART + MSE. DART's dropout provides implicit regularization
+    # but does NOT support early stopping — all n_estimators trees are built.
+    # Huber loss is incompatible with DART (causes catastrophic overfitting);
+    # use GBDT_PARAMS for Huber experiments.
     DEFAULT_PARAMS = {
         "objective": "regression",
-        "metric": ["rmse", "mae"],
-        "boosting_type": "gbdt",
-        "num_leaves": 31,
-        "learning_rate": 0.05,
-        # Regularization to reduce feature dominance
-        "feature_fraction": 0.7,  # Sample 70% of features per tree
-        "bagging_fraction": 0.7,  # Sample 70% of data per tree
+        "metric": ["mae", "rmse"],
+        "boosting_type": "dart",
+        "num_leaves": 63,
+        "learning_rate": 0.03,
+        # DART-specific dropout regularization
+        "drop_rate": 0.1,
+        "skip_drop": 0.5,
+        # Feature/data sampling
+        "feature_fraction": 0.6,
+        "bagging_fraction": 0.7,
         "bagging_freq": 5,
-        "min_child_samples": 20,  # Minimum samples per leaf
-        "reg_alpha": 0.1,  # L1 regularization
-        "reg_lambda": 0.1,  # L2 regularization
+        "min_child_samples": 20,
+        "reg_alpha": 0.3,
+        "reg_lambda": 0.3,
         "verbose": -1,
-        "n_estimators": 500,
-        "early_stopping_rounds": 50,
+        "n_estimators": 2000,
+        "early_stopping_rounds": 200,
+    }
+
+    # A/B test variants for controlled DART vs GBDT comparison (Phase 1a).
+    # Use whichever produces lower test MAE. Both use Huber loss.
+    GBDT_PARAMS = {
+        "objective": "huber",
+        "alpha": 0.5,
+        "metric": ["mae", "rmse"],
+        "boosting_type": "gbdt",
+        "num_leaves": 63,
+        "learning_rate": 0.05,
+        "feature_fraction": 0.7,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 5,
+        "min_child_samples": 20,
+        "reg_alpha": 0.1,
+        "reg_lambda": 0.5,
+        "verbose": -1,
+        "n_estimators": 3000,
+        "early_stopping_rounds": 100,
+    }
+
+    DART_PARAMS = {
+        "objective": "huber",
+        "alpha": 0.5,
+        "metric": ["mae", "rmse"],
+        "boosting_type": "dart",
+        "num_leaves": 63,
+        "learning_rate": 0.03,
+        "drop_rate": 0.1,
+        "skip_drop": 0.5,
+        "feature_fraction": 0.6,
+        "bagging_fraction": 0.7,
+        "bagging_freq": 5,
+        "min_child_samples": 20,
+        "reg_alpha": 0.3,
+        "reg_lambda": 0.3,
+        "verbose": -1,
+        "n_estimators": 2000,
+        "early_stopping_rounds": 200,
     }
 
     def __init__(
@@ -75,6 +134,7 @@ class LightGBMModel(PriceModel):
         y_train: pd.Series,
         X_val: pd.DataFrame | None = None,
         y_val: pd.Series | None = None,
+        sample_weight: np.ndarray | None = None,
     ) -> "LightGBMModel":
         """Fit the model.
 
@@ -83,6 +143,7 @@ class LightGBMModel(PriceModel):
             y_train: Training target
             X_val: Validation features (used for early stopping)
             y_val: Validation target (used for early stopping)
+            sample_weight: Optional per-sample weights for training
 
         Returns:
             self
@@ -96,6 +157,7 @@ class LightGBMModel(PriceModel):
         train_data = lgb.Dataset(
             X_train,
             label=y_train,
+            weight=sample_weight,
             categorical_feature=cat_features if cat_features else "auto",
         )
 
@@ -248,6 +310,8 @@ class QuantileLightGBMModel(PriceModel):
         """
         base_params = LightGBMModel.DEFAULT_PARAMS.copy()
         base_params.update(params or {})
+        # Force quantile objective — overrides any "huber" from DEFAULT_PARAMS.
+        # alpha is also overridden per quantile in fit(), so DEFAULT_PARAMS alpha is irrelevant.
         base_params["objective"] = "quantile"
 
         self._base_params = base_params
@@ -276,6 +340,7 @@ class QuantileLightGBMModel(PriceModel):
         y_train: pd.Series,
         X_val: pd.DataFrame | None = None,
         y_val: pd.Series | None = None,
+        sample_weight: np.ndarray | None = None,
     ) -> "QuantileLightGBMModel":
         """Fit three quantile models.
 
@@ -284,6 +349,7 @@ class QuantileLightGBMModel(PriceModel):
             y_train: Training target
             X_val: Validation features
             y_val: Validation target
+            sample_weight: Optional per-sample weights for training
 
         Returns:
             self
@@ -306,6 +372,7 @@ class QuantileLightGBMModel(PriceModel):
             train_data = lgb.Dataset(
                 X_train,
                 label=y_train,
+                weight=sample_weight,
                 categorical_feature=cat_features if cat_features else "auto",
             )
 
@@ -362,9 +429,9 @@ class QuantileLightGBMModel(PriceModel):
         assert self._model_median is not None
         assert self._model_lower is not None
         assert self._model_upper is not None
-        median: np.ndarray = self._model_median.predict(X)  # type: ignore[assignment]
-        lower: np.ndarray = self._model_lower.predict(X)  # type: ignore[assignment]
-        upper: np.ndarray = self._model_upper.predict(X)  # type: ignore[assignment]
+        median: np.ndarray = self._model_median.predict(X)  # type: ignore[assignment,type-arg]
+        lower: np.ndarray = self._model_lower.predict(X)  # type: ignore[assignment,type-arg]
+        upper: np.ndarray = self._model_upper.predict(X)  # type: ignore[assignment,type-arg]
 
         return median, lower, upper
 

@@ -4,6 +4,7 @@ import pandas as pd
 
 from ticket_price_predictor.config import get_ml_config
 from ticket_price_predictor.ml.features.base import FeatureExtractor
+from ticket_price_predictor.ml.features.geo_mapping import _normalize_city
 
 _config = get_ml_config()
 
@@ -90,8 +91,8 @@ class EventFeatureExtractor(FeatureExtractor):
 
         # City tier
         if "city" in df.columns:
-            city_lower = df["city"].str.lower().str.strip()
-            result["city_tier"] = city_lower.apply(self._get_city_tier)
+            city_normalized = df["city"].apply(_normalize_city)
+            result["city_tier"] = city_normalized.apply(self._get_city_tier)
         else:
             result["city_tier"] = 3
 

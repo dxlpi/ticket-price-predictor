@@ -11,10 +11,9 @@ from ticket_price_predictor.popularity.aggregator import (
     PopularityAggregator,
     PopularityTier,
 )
-from ticket_price_predictor.popularity.bandsintown import BandsintownPopularity
 from ticket_price_predictor.popularity.cache import PopularityCache
-from ticket_price_predictor.popularity.songkick import SongkickPopularity
-from ticket_price_predictor.popularity.spotify import SpotifyPopularity
+from ticket_price_predictor.popularity.lastfm import LastfmPopularity
+from ticket_price_predictor.popularity.youtube import YouTubePopularity
 
 logger = logging.getLogger(__name__)
 
@@ -24,40 +23,31 @@ class PopularityService:
 
     def __init__(
         self,
-        spotify_client_id: str | None = None,
-        spotify_client_secret: str | None = None,
-        songkick_api_key: str | None = None,
-        bandsintown_app_id: str | None = None,
+        lastfm_api_key: str | None = None,
         cache_dir: Path | str | None = None,
         cache_ttl_hours: int = 24,
     ) -> None:
         """Initialize popularity service with API clients.
 
         Args:
-            spotify_client_id: Spotify API client ID (or SPOTIFY_CLIENT_ID env var)
-            spotify_client_secret: Spotify API client secret (or SPOTIFY_CLIENT_SECRET env var)
-            songkick_api_key: Songkick API key (or SONGKICK_API_KEY env var)
-            bandsintown_app_id: Bandsintown app ID (or BANDSINTOWN_APP_ID env var)
+            lastfm_api_key: Last.fm API key (or LASTFM_API_KEY env var)
             cache_dir: Directory for caching results
             cache_ttl_hours: Cache time-to-live in hours
         """
-        # Initialize clients with env var fallbacks
-        spotify_id = spotify_client_id or os.getenv("SPOTIFY_CLIENT_ID")
-        spotify_secret = spotify_client_secret or os.getenv("SPOTIFY_CLIENT_SECRET")
+        # Initialize YouTube Music client (no API key needed)
+        self.youtube: YouTubePopularity | None = None
+        try:
+            yt = YouTubePopularity()
+            if yt.available:
+                self.youtube = yt
+        except Exception as e:
+            logger.warning(f"Failed to initialize YouTube Music client: {e}")
 
-        self.spotify: SpotifyPopularity | None = None
-        if spotify_id and spotify_secret:
-            self.spotify = SpotifyPopularity(spotify_id, spotify_secret)
-
-        songkick_key = songkick_api_key or os.getenv("SONGKICK_API_KEY")
-        self.songkick: SongkickPopularity | None = None
-        if songkick_key:
-            self.songkick = SongkickPopularity(songkick_key)
-
-        bandsintown_id = bandsintown_app_id or os.getenv("BANDSINTOWN_APP_ID")
-        self.bandsintown: BandsintownPopularity | None = None
-        if bandsintown_id:
-            self.bandsintown = BandsintownPopularity(bandsintown_id)
+        # Initialize Last.fm client with env var fallback
+        lastfm_key = lastfm_api_key or os.getenv("LASTFM_API_KEY")
+        self.lastfm: LastfmPopularity | None = None
+        if lastfm_key:
+            self.lastfm = LastfmPopularity(lastfm_key)
 
         # Initialize aggregator
         self.aggregator = PopularityAggregator()
@@ -71,12 +61,10 @@ class PopularityService:
 
         # Log available sources
         sources = []
-        if self.spotify and self.spotify.available:
-            sources.append("Spotify")
-        if self.songkick and self.songkick.available:
-            sources.append("Songkick")
-        if self.bandsintown and self.bandsintown.available:
-            sources.append("Bandsintown")
+        if self.youtube and self.youtube.available:
+            sources.append("YouTube Music")
+        if self.lastfm and self.lastfm.available:
+            sources.append("Last.fm")
 
         if sources:
             logger.info(f"PopularityService initialized with sources: {', '.join(sources)}")
@@ -106,54 +94,125 @@ class PopularityService:
                     name=str(cached["name"]),
                     popularity_score=float(cached["popularity_score"]),
                     tier=PopularityTier(str(cached["tier"])),
-                    spotify_popularity=int(cached["spotify_popularity"])
-                    if cached.get("spotify_popularity") is not None
+                    youtube_subscribers=int(cached["youtube_subscribers"])
+                    if cached.get("youtube_subscribers") is not None
                     else None,
-                    spotify_followers=int(cached["spotify_followers"])
-                    if cached.get("spotify_followers") is not None
+                    youtube_views=int(cached["youtube_views"])
+                    if cached.get("youtube_views") is not None
                     else None,
-                    songkick_trackers=int(cached["songkick_trackers"])
-                    if cached.get("songkick_trackers") is not None
+                    lastfm_listeners=int(cached["lastfm_listeners"])
+                    if cached.get("lastfm_listeners") is not None
                     else None,
-                    bandsintown_trackers=int(cached["bandsintown_trackers"])
-                    if cached.get("bandsintown_trackers") is not None
+                    lastfm_play_count=int(cached["lastfm_play_count"])
+                    if cached.get("lastfm_play_count") is not None
                     else None,
                     sources_available=list(cached.get("sources_available", [])),
                 )
 
         # Fetch from each source
-        spotify_popularity = None
-        spotify_followers = None
-        songkick_trackers = None
-        bandsintown_trackers = None
+        youtube_subscribers = None
+        youtube_views = None
+        lastfm_listeners = None
+        lastfm_play_count = None
 
-        if self.spotify and self.spotify.available:
-            spotify_metrics = self.spotify.get_artist_metrics(artist_name)
-            if spotify_metrics:
-                spotify_popularity = spotify_metrics.popularity
-                spotify_followers = spotify_metrics.followers
+        if self.youtube and self.youtube.available:
+            youtube_metrics = self.youtube.get_artist_metrics(artist_name)
+            if youtube_metrics:
+                youtube_subscribers = youtube_metrics.subscriber_count
+                youtube_views = youtube_metrics.view_count
 
-        if self.songkick and self.songkick.available:
-            songkick_metrics = self.songkick.get_artist_metrics(artist_name)
-            if songkick_metrics:
-                songkick_trackers = songkick_metrics.tracker_count
-
-        if self.bandsintown and self.bandsintown.available:
-            bandsintown_metrics = self.bandsintown.get_artist_metrics(artist_name)
-            if bandsintown_metrics:
-                bandsintown_trackers = bandsintown_metrics.tracker_count
+        if self.lastfm and self.lastfm.available:
+            lastfm_metrics = self.lastfm.get_artist_metrics(artist_name)
+            if lastfm_metrics:
+                lastfm_listeners = lastfm_metrics.listener_count
+                lastfm_play_count = lastfm_metrics.play_count
 
         # Calculate aggregated score
         popularity = self.aggregator.calculate_score(
             artist_name=artist_name,
-            spotify_popularity=spotify_popularity,
-            spotify_followers=spotify_followers,
-            songkick_trackers=songkick_trackers,
-            bandsintown_trackers=bandsintown_trackers,
+            youtube_subscribers=youtube_subscribers,
+            youtube_views=youtube_views,
+            lastfm_listeners=lastfm_listeners,
+            lastfm_play_count=lastfm_play_count,
         )
 
         # Cache result
         self.cache.set(artist_name, popularity)
+
+        return popularity
+
+    def get_artist_popularity_for_market(
+        self,
+        artist_name: str,
+        market: str = "US",
+        skip_cache: bool = False,
+    ) -> ArtistPopularity:
+        """Get popularity data for an artist in a specific market.
+
+        Args:
+            artist_name: Artist name to look up
+            market: ISO 3166-1 alpha-2 country code
+            skip_cache: Skip cache lookup and fetch fresh data
+
+        Returns:
+            ArtistPopularity with market-specific data where available
+        """
+        # Use market-specific cache key to avoid collision with global cache
+        cache_key = f"{artist_name}__market_{market}"
+
+        # Check cache first
+        if not skip_cache:
+            cached = self.cache.get(cache_key)
+            if cached:
+                logger.debug(f"Cache hit for {artist_name} (market={market})")
+                return ArtistPopularity(
+                    name=str(cached["name"]),
+                    popularity_score=float(cached["popularity_score"]),
+                    tier=PopularityTier(str(cached["tier"])),
+                    youtube_subscribers=int(cached["youtube_subscribers"])
+                    if cached.get("youtube_subscribers") is not None
+                    else None,
+                    youtube_views=int(cached["youtube_views"])
+                    if cached.get("youtube_views") is not None
+                    else None,
+                    lastfm_listeners=int(cached["lastfm_listeners"])
+                    if cached.get("lastfm_listeners") is not None
+                    else None,
+                    lastfm_play_count=int(cached["lastfm_play_count"])
+                    if cached.get("lastfm_play_count") is not None
+                    else None,
+                    sources_available=list(cached.get("sources_available", [])),
+                )
+
+        # Fetch from each source (neither YouTube nor Last.fm are market-specific)
+        youtube_subscribers = None
+        youtube_views = None
+        lastfm_listeners = None
+        lastfm_play_count = None
+
+        if self.youtube and self.youtube.available:
+            youtube_metrics = self.youtube.get_artist_metrics(artist_name)
+            if youtube_metrics:
+                youtube_subscribers = youtube_metrics.subscriber_count
+                youtube_views = youtube_metrics.view_count
+
+        if self.lastfm and self.lastfm.available:
+            lastfm_metrics = self.lastfm.get_artist_metrics(artist_name)
+            if lastfm_metrics:
+                lastfm_listeners = lastfm_metrics.listener_count
+                lastfm_play_count = lastfm_metrics.play_count
+
+        # Calculate aggregated score
+        popularity = self.aggregator.calculate_score(
+            artist_name=artist_name,
+            youtube_subscribers=youtube_subscribers,
+            youtube_views=youtube_views,
+            lastfm_listeners=lastfm_listeners,
+            lastfm_play_count=lastfm_play_count,
+        )
+
+        # Cache result with market-specific key
+        self.cache.set(cache_key, popularity)
 
         return popularity
 

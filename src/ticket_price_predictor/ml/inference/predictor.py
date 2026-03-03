@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -25,6 +26,7 @@ class PricePredictor:
         model: PriceModel,
         model_version: str = "v1",
         cold_start_handler: ColdStartHandler | None = None,
+        popularity_service: Any | None = None,
     ) -> None:
         """Initialize predictor.
 
@@ -32,11 +34,15 @@ class PricePredictor:
             model: Trained model
             model_version: Model version string
             cold_start_handler: Handler for new events/performers
+            popularity_service: PopularityService instance for popularity features
         """
         self._model = model
         self._model_version = model_version
         self._cold_start = cold_start_handler or ColdStartHandler()
-        self._feature_pipeline = FeaturePipeline(include_momentum=True)
+        self._feature_pipeline = FeaturePipeline(
+            include_momentum=True,
+            popularity_service=popularity_service,
+        )
 
     @classmethod
     def from_path(

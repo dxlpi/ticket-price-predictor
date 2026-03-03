@@ -60,7 +60,8 @@ pip install \
     playwright \
     playwright-stealth \
     python-dotenv \
-    requests
+    httpx \
+    ytmusicapi
 
 # Install Playwright browsers
 echo "Installing Playwright browsers..."
@@ -74,11 +75,10 @@ mkdir -p data/raw/listings logs
 # Create .env file template
 echo "Creating .env template..."
 cat > .env << 'EOF'
-# Optional API keys for popularity data
-# SPOTIFY_CLIENT_ID=
-# SPOTIFY_CLIENT_SECRET=
-# SONGKICK_API_KEY=
-# BANDSINTOWN_APP_ID=
+# Required API keys
+TICKETMASTER_API_KEY=
+LASTFM_API_KEY=
+# YouTube Music uses ytmusicapi (no API key needed)
 EOF
 
 echo ""

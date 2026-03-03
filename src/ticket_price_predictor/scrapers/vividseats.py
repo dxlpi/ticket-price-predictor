@@ -219,7 +219,11 @@ class VividSeatsScraper:
 
         async def capture_listings(response: Response) -> None:
             nonlocal listings_data, via_api
-            if "/hermes/api/v1/listings" in response.url and "productionId" in response.url:
+            if (
+                "/hermes/api/v" in response.url
+                and "/listings" in response.url
+                and "productionId" in response.url
+            ):
                 try:
                     if "json" in response.headers.get("content-type", ""):
                         listings_data = await response.json()
@@ -254,7 +258,9 @@ class VividSeatsScraper:
         try:
             await self._page.wait_for_event(
                 "response",
-                predicate=lambda r: "/hermes/api/v1/listings" in r.url and "productionId" in r.url,
+                predicate=lambda r: (
+                    "/hermes/api/v" in r.url and "/listings" in r.url and "productionId" in r.url
+                ),
                 timeout=25000,
             )
         except Exception:

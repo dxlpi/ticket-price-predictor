@@ -4,10 +4,11 @@ from typing import Any
 
 import numpy as np
 import optuna
+import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from ticket_price_predictor.ml.models.lightgbm_model import LightGBMModel
-from ticket_price_predictor.ml.training.splitter import DataSplit
+from ticket_price_predictor.ml.training.splitter import DataSplit, RawDataSplit
 
 
 def create_objective(
@@ -34,6 +35,8 @@ def create_objective(
             params = _sample_conservative(trial)
         elif search_space == "regularization_focus":
             params = _sample_regularization_focus(trial)
+        elif search_space == "full":
+            params = _sample_full(trial)
         else:  # aggressive
             params = _sample_aggressive(trial)
 
@@ -78,8 +81,7 @@ def create_objective(
 
             return float(objective_value)
 
-        except Exception as e:
-            # Log error and return worst possible value
+        except (ValueError, RuntimeError, KeyError) as e:
             trial.set_user_attr("error", str(e))
             return float("inf")
 
@@ -148,3 +150,234 @@ def _sample_regularization_focus(trial: optuna.Trial) -> dict[str, Any]:
         "early_stopping_rounds": 50,
         "verbose": -1,
     }
+
+
+def _sample_full(trial: optuna.Trial) -> dict[str, Any]:
+    """Full search space with DART/GBDT selection and Huber loss option.
+
+    Explores boosting type (GBDT vs DART), loss function (L2 vs Huber),
+    and conditional parameters that depend on boosting type.
+
+    When boosting_type="dart", n_estimators is fixed at 2000 because DART
+    uses all iterations (no early stopping at a single best iteration).
+    """
+    boosting_type = trial.suggest_categorical("boosting_type", ["gbdt", "dart"])
+
+    # DART uses all iterations; fix n_estimators rather than sampling
+    if boosting_type == "dart":
+        n_estimators = 2000
+    else:
+        n_estimators = trial.suggest_int("n_estimators", 500, 3000, step=100)
+
+    params: dict[str, Any] = {
+        "objective": "regression",
+        "metric": ["rmse", "mae"],
+        "boosting_type": boosting_type,
+        "num_leaves": trial.suggest_int("num_leaves", 15, 255),
+        "max_depth": trial.suggest_categorical("max_depth", [-1, 5, 7, 10, 15]),
+        "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.1, log=True),
+        "n_estimators": n_estimators,
+        "feature_fraction": trial.suggest_float("feature_fraction", 0.3, 0.9),
+        "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 0.9),
+        "bagging_freq": trial.suggest_categorical("bagging_freq", [1, 5, 10]),
+        "min_child_samples": trial.suggest_int("min_child_samples", 5, 200),
+        "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 20.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 0.01, 20.0, log=True),
+        "max_bin": trial.suggest_categorical("max_bin", [63, 127, 255, 511]),
+        "path_smooth": trial.suggest_float("path_smooth", 0.0, 10.0),
+        "early_stopping_rounds": 200,
+        "verbose": -1,
+    }
+
+    # DART-specific conditional parameters
+    if boosting_type == "dart":
+        params["drop_rate"] = trial.suggest_float("drop_rate", 0.05, 0.3)
+        params["skip_drop"] = trial.suggest_float("skip_drop", 0.3, 0.7)
+        params["max_drop"] = trial.suggest_int("max_drop", 10, 50)
+
+    # Huber loss option — ONLY with GBDT (DART+Huber causes catastrophic overfitting)
+    if boosting_type == "gbdt":
+        use_huber = trial.suggest_categorical("use_huber", [True, False])
+        if use_huber:
+            params["objective"] = "huber"
+            params["alpha"] = trial.suggest_float("huber_alpha", 0.5, 2.0)
+
+    return params
+
+
+def create_raw_objective(
+    raw_split: RawDataSplit,
+    target_col: str = "listing_price",
+    pipeline_kwargs: dict[str, Any] | None = None,
+    penalize_dominance: bool = True,
+) -> Any:
+    """Factory to create leak-free objective with dollar-space evaluation.
+
+    Unlike create_objective which takes pre-extracted features (potential leakage),
+    this function takes raw data splits and re-extracts features per trial.
+    This enables tuning smoothing factors and other pipeline parameters.
+
+    Evaluates MAE in dollar-space (np.expm1) since the acceptance criteria
+    are in dollars, and log-space MAE is not monotonically equivalent.
+
+    Args:
+        raw_split: Pre-computed raw data split (before feature extraction)
+        target_col: Target column name
+        pipeline_kwargs: Base kwargs for FeaturePipeline (e.g. include_listing=False)
+        penalize_dominance: Add penalty for high feature dominance
+
+    Returns:
+        Objective function for Optuna
+    """
+    from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
+
+    base_kwargs: dict[str, Any] = {"include_momentum": True}
+    if pipeline_kwargs:
+        base_kwargs.update(pipeline_kwargs)
+
+    def objective(trial: optuna.Trial) -> float:
+        """Objective: minimize dollar-space validation MAE."""
+
+        # Sample model hyperparameters
+        params = _sample_tuning(trial)
+
+        # Sample smoothing factors for feature extractors
+        extractor_params: dict[str, dict[str, Any]] = {}
+
+        event_smoothing = trial.suggest_int("event_pricing_smoothing", 5, 50)
+        artist_smoothing = trial.suggest_int("artist_stats_smoothing", 20, 100)
+        regional_smoothing = trial.suggest_int("regional_smoothing", 30, 150)
+
+        extractor_params["EventPricingFeatureExtractor"] = {
+            "SMOOTHING_FACTOR": event_smoothing,
+        }
+        extractor_params["PerformerFeatureExtractor"] = {
+            "artist_stats_smoothing": artist_smoothing,
+        }
+        extractor_params["RegionalPopularityFeatureExtractor"] = {
+            "regional_smoothing": regional_smoothing,
+        }
+
+        try:
+            # Re-extract features with trial-specific smoothing
+            kwargs = {**base_kwargs, "extractor_params": extractor_params}
+            pipeline = FeaturePipeline(**kwargs)
+            pipeline.fit(raw_split.train_df)
+
+            X_train = pipeline.transform(raw_split.train_df).copy()
+            X_val = pipeline.transform(raw_split.val_df).copy()
+
+            # Remove zero-variance features
+            zero_var_cols = [c for c in X_train.columns if X_train[c].nunique() <= 1]
+            if zero_var_cols:
+                X_train = X_train.drop(columns=zero_var_cols)
+                X_val = X_val.drop(columns=zero_var_cols)
+
+            # Log-transform price-based features
+            price_cols = [
+                c
+                for c in X_train.columns
+                if "price" in c.lower() or "avg" in c.lower() or "median" in c.lower()
+            ]
+            for c in price_cols:
+                X_train[c] = np.log1p(X_train[c].clip(lower=0))
+                X_val[c] = np.log1p(X_val[c].clip(lower=0))
+
+            # Log-transform targets
+            y_train = pd.Series(np.log1p(raw_split.train_df[target_col].values), name=target_col)
+            y_val_raw = raw_split.val_df[target_col].values
+            y_val_log = pd.Series(np.log1p(y_val_raw), name=target_col)
+
+            # Train model
+            model = LightGBMModel(params=params)
+            model.fit(X_train, y_train, X_val, y_val_log)
+
+            # Evaluate in DOLLAR-SPACE (not log-space)
+            val_preds_log = model.predict(X_val)
+            val_preds_dollars = np.expm1(val_preds_log)
+            val_mae = float(mean_absolute_error(y_val_raw, val_preds_dollars))
+
+            # Secondary metrics in dollar-space
+            val_r2 = float(r2_score(y_val_raw, val_preds_dollars))
+            val_rmse = float(np.sqrt(mean_squared_error(y_val_raw, val_preds_dollars)))
+
+            # Train metrics for overfitting check
+            train_preds_log = model.predict(X_train)
+            train_preds_dollars = np.expm1(train_preds_log)
+            y_train_raw = raw_split.train_df[target_col].values
+            train_mae = float(mean_absolute_error(y_train_raw, train_preds_dollars))
+
+            # Feature importance
+            importance = model.get_feature_importance()
+            max_importance = max(importance.values()) if importance else 0.0
+            top_feature = list(importance.keys())[0] if importance else ""
+
+            # Store as user attributes
+            trial.set_user_attr("val_mae_dollars", val_mae)
+            trial.set_user_attr("val_r2", val_r2)
+            trial.set_user_attr("val_rmse", val_rmse)
+            trial.set_user_attr("train_mae", train_mae)
+            trial.set_user_attr("best_iteration", model.best_iteration)
+            trial.set_user_attr("max_feature_importance", max_importance)
+            trial.set_user_attr("top_feature", top_feature)
+            trial.set_user_attr("n_features", X_train.shape[1])
+
+            # Objective value
+            objective_value = val_mae
+
+            if penalize_dominance:
+                dominance_penalty = max(0, max_importance - 0.5) * val_mae * 0.1
+                objective_value += dominance_penalty
+                trial.set_user_attr("dominance_penalty", dominance_penalty)
+
+            return objective_value
+
+        except (ValueError, RuntimeError, KeyError) as e:
+            trial.set_user_attr("error", str(e))
+            return float("inf")
+
+    return objective
+
+
+def _sample_tuning(trial: optuna.Trial) -> dict[str, Any]:
+    """Search space for Phase 4 tuning with DART/GBDT and safety guards.
+
+    Uses MAE-first metric ordering for MAE-based early stopping.
+    Guards against DART+Huber (catastrophic overfitting).
+    """
+    boosting_type = trial.suggest_categorical("boosting_type", ["gbdt", "dart"])
+
+    if boosting_type == "dart":
+        n_estimators = trial.suggest_categorical("dart_n_estimators", [1500, 2000, 2500])
+    else:
+        n_estimators = trial.suggest_int("n_estimators", 500, 3000, step=100)
+
+    params: dict[str, Any] = {
+        "objective": "regression",
+        "metric": ["mae", "rmse"],
+        "boosting_type": boosting_type,
+        "num_leaves": trial.suggest_int("num_leaves", 31, 127),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
+        "n_estimators": n_estimators,
+        "feature_fraction": trial.suggest_float("feature_fraction", 0.4, 0.8),
+        "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 0.9),
+        "bagging_freq": trial.suggest_categorical("bagging_freq", [1, 5, 10]),
+        "min_child_samples": trial.suggest_int("min_child_samples", 10, 100),
+        "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 5.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 0.01, 5.0, log=True),
+        "early_stopping_rounds": 200,
+        "verbose": -1,
+    }
+
+    if boosting_type == "dart":
+        params["drop_rate"] = trial.suggest_float("drop_rate", 0.05, 0.2)
+        params["skip_drop"] = trial.suggest_float("skip_drop", 0.3, 0.7)
+
+    # Huber only with GBDT (DART+Huber causes catastrophic overfitting)
+    if boosting_type == "gbdt":
+        use_huber = trial.suggest_categorical("use_huber", [True, False])
+        if use_huber:
+            params["objective"] = "huber"
+            params["alpha"] = trial.suggest_float("huber_alpha", 0.5, 2.0)
+
+    return params

@@ -1,5 +1,6 @@
 """Seating and zone feature extraction."""
 
+import hashlib
 import re
 
 import pandas as pd
@@ -61,8 +62,10 @@ class SeatingFeatureExtractor(FeatureExtractor):
         else:
             result["row_numeric"] = 10  # Default mid-row
 
-        # Section hash for venue-specific patterns
-        result["section_hash"] = df["section"].apply(lambda s: hash(s.lower().strip()) % 1000)
+        # Section hash for venue-specific patterns (deterministic across sessions)
+        result["section_hash"] = df["section"].apply(
+            lambda s: int(hashlib.md5(s.lower().strip().encode()).hexdigest(), 16) % 1000
+        )
 
         # Binary features
         section_lower = df["section"].str.lower()

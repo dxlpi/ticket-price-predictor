@@ -77,19 +77,27 @@ class MLConfig:
     popularity_medium_threshold: float = 40.0
 
     # Source weights for popularity scoring
-    weight_spotify_popularity: float = 0.40
-    weight_spotify_followers: float = 0.25
-    weight_songkick_trackers: float = 0.20
-    weight_bandsintown_trackers: float = 0.15
+    weight_youtube_subscribers: float = 0.30
+    weight_youtube_views: float = 0.20
+    weight_lastfm_listeners: float = 0.30
+    weight_lastfm_play_count: float = 0.20
 
     # Normalization constants
-    max_spotify_followers: int = 100_000_000
-    max_tracker_count: int = 10_000_000
+    max_youtube_subscribers: int = 100_000_000
+    max_youtube_views: int = 10_000_000_000
+    max_lastfm_listeners: int = 50_000_000
+    max_lastfm_play_count: int = 500_000_000
 
     # === Training ===
     default_train_ratio: float = 0.7
     default_val_ratio: float = 0.15
     default_test_ratio: float = 0.15
+
+    # === Regional Popularity Defaults ===
+    regional_default_avg_price: float = 150.0
+    regional_default_listing_count: float = 0.0
+    regional_default_price_ratio: float = 1.0
+    regional_default_market_strength: float = 0.5
 
     def get_zone_defaults(self) -> dict[str, float]:
         """Get default prices by zone name."""

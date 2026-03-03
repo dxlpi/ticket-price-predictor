@@ -227,7 +227,7 @@ class TestColdStartHandlerWithPopularityService:
             name="New Artist",
             popularity_score=85.0,
             tier=PopularityTier.HIGH,
-            sources_available=["spotify_popularity"],
+            sources_available=["youtube_subscribers"],
         )
 
         handler = ColdStartHandler(popularity_service=mock_service)

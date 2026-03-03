@@ -1,26 +1,31 @@
 # Ticket Price Predictor
 
-ML system for predicting ticket price changes at the seat-zone level using historical time-series data, demand signals, and event context.
+ML system for predicting secondary-market ticket prices at the seat-zone level using historical time-series data, demand signals, and event context.
 
 ## Overview
 
-The system targets the U.S. market (concerts, sports, theater) and is designed to be legally safe, platform-agnostic, and extensible to global markets.
+The system targets the U.S. market (concerts, sports, theater) and predicts resale ticket prices by combining data from multiple sources with a LightGBM gradient boosting model.
 
-**Current Status**: M1 Data Pipeline complete
+**Current Model Performance**: MAE $94.60 | MAPE 22.4% | R² 0.66
 
 ## Features
 
-- Event metadata collection via Ticketmaster Discovery API
-- Time-series price snapshot storage (Parquet format)
+- Event discovery via Ticketmaster Discovery API
+- Real-time price scraping from VividSeats & StubHub (Playwright-based)
+- Artist popularity aggregation from YouTube Music and Last.fm
+- 44 engineered features across 7 domains (artist, event, seating, time-series, momentum, popularity, regional)
+- LightGBM model with quantile regression variant for 95% confidence intervals
+- Leak-free training pipeline with artist-stratified temporal splits
+- Data preprocessing pipeline with cleaning, validation, and transformation
 - Standardized seat zone normalization for cross-venue learning
-- Data validation and quality checks
-- Gradient boosting regression for price prediction (planned)
+- 301 automated tests
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) package manager
 - [Ticketmaster API key](https://developer.ticketmaster.com/)
 
 ### Installation
@@ -30,78 +35,62 @@ The system targets the U.S. market (concerts, sports, theater) and is designed t
 git clone https://github.com/your-org/ticket-price-predictor.git
 cd ticket-price-predictor
 
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+# Install with uv
+uv sync
 
-# Install with development dependencies
-make install-dev
-
-# Copy environment template and add your API key
+# Copy environment template and add your API keys
 cp .env.example .env
-# Edit .env and set TICKETMASTER_API_KEY
-```
-
-### Initialize DVC (Data Version Control)
-
-```bash
-# Install DVC
-pip install dvc
-
-# Initialize DVC in the project
-dvc init
-
-# Track data directories
-dvc add data/raw
-dvc add data/processed
+# Edit .env and set TICKETMASTER_API_KEY, LASTFM_API_KEY
 ```
 
 ### Verify Installation
 
 ```bash
-# Run all checks
+# Run all checks (lint + typecheck + tests)
 make check
 
 # Or run individually:
-make lint       # Check code style
-make typecheck  # Run mypy
-make test       # Run tests
+make lint       # ruff check + format
+make typecheck  # mypy
+make test       # pytest
 ```
 
-## Data Pipeline
+## Usage
 
-### Run Full Pipeline
-
-```bash
-# Ingest events and collect snapshots
-make pipeline
-```
-
-### Individual Steps
+### Data Collection
 
 ```bash
-# Step 1: Ingest event metadata from Ticketmaster
-make ingest-events
+# Collect ticket listings for an artist
+python scripts/collect_listings.py --artist "Bruno Mars" --max-events 3
 
-# Step 2: Collect price snapshots for tracked events
-make collect-snapshots
-```
-
-### CLI Options
-
-```bash
-# Ingest events with options
-python scripts/ingest_events.py \
-    --days-ahead 90 \
-    --event-types concert sports \
-    --cities "Los Angeles" "New York" \
-    --max-events 100
-
-# Collect snapshots for specific events
-python scripts/collect_snapshots.py --event-ids EVENT1 EVENT2
+# Ingest event metadata from Ticketmaster
+python scripts/ingest_events.py --event-types concert --cities "Las Vegas" "New York"
 
 # Run full pipeline
 python scripts/run_pipeline.py --days-ahead 90 --event-types concert
+```
+
+### Model Training
+
+```bash
+# Train LightGBM model
+python scripts/train_model.py --model lightgbm --version v13
+
+# Train with Optuna hyperparameters
+python scripts/train_model.py --from-study lightgbm_aggressive --version v14
+
+# Train with preprocessing enabled
+python scripts/train_model.py --model lightgbm --version v13 --preprocess
+
+# Hyperparameter tuning
+python scripts/tune_model.py --n-trials 50
+```
+
+### Predictions
+
+```bash
+# Predict prices for all zones
+python scripts/predict.py --artist "BTS" --city "Tampa" --all-zones
 ```
 
 ## Project Structure
@@ -109,113 +98,104 @@ python scripts/run_pipeline.py --days-ahead 90 --event-types concert
 ```
 ticket-price-predictor/
 ├── src/ticket_price_predictor/
-│   ├── api/                  # External API clients
-│   │   └── ticketmaster.py   # Ticketmaster Discovery API
-│   ├── schemas/              # Data models
-│   │   └── snapshots.py      # Event and price snapshot schemas
-│   ├── storage/              # Data persistence
-│   │   ├── parquet.py        # Parquet I/O utilities
-│   │   └── repository.py     # Event and snapshot repositories
-│   ├── ingestion/            # Data ingestion services
-│   │   ├── events.py         # Event metadata ingestion
-│   │   └── snapshots.py      # Price snapshot collection
+│   ├── api/                  # External API clients (Ticketmaster, Setlist.fm)
+│   ├── schemas/              # Pydantic data models
+│   ├── storage/              # Parquet storage layer (repositories)
+│   ├── ingestion/            # Data collection services
+│   ├── scrapers/             # VividSeats/StubHub web scrapers
+│   ├── normalization/        # Seat zone normalization
 │   ├── validation/           # Data quality checks
-│   │   └── quality.py        # Validation rules
-│   ├── normalization/        # Data normalization
-│   │   └── seat_zones.py     # Seat zone mapping
-│   └── config.py             # Settings management
-├── scripts/
-│   ├── ingest_events.py      # Event ingestion CLI
-│   ├── collect_snapshots.py  # Snapshot collection CLI
-│   └── run_pipeline.py       # Full pipeline runner
-├── tests/                    # Test suite
-├── data/
-│   ├── raw/                  # Raw snapshot data (DVC tracked)
-│   │   ├── events/           # Event metadata (Parquet)
-│   │   └── snapshots/        # Price snapshots (partitioned Parquet)
-│   └── processed/            # Processed features (DVC tracked)
-└── fixtures/                 # Sample data for testing
+│   ├── preprocessing/        # Data cleaning & transformation pipeline
+│   ├── popularity/           # Popularity aggregation (YouTube Music, Last.fm)
+│   ├── synthetic/            # Synthetic data generation
+│   └── ml/                   # Machine learning pipeline
+│       ├── features/         # 7 feature extractors (44 features)
+│       ├── models/           # Baseline, LightGBM, Quantile LightGBM
+│       ├── training/         # Split-first training pipeline
+│       ├── tuning/           # Optuna hyperparameter optimization
+│       └── inference/        # Prediction service
+├── scripts/                  # CLI entry points
+├── tests/                    # 301 automated tests
+└── data/
+    ├── raw/                  # Raw data (events, listings, snapshots)
+    └── models/               # Trained model artifacts
 ```
+
+## Data Flow
+
+```
+Ticketmaster API → Event metadata (discovery)
+VividSeats/StubHub → Ticket listings (actual resale prices)
+YouTube Music/Last.fm → Artist popularity signals
+                    ↓
+        Preprocessing Pipeline
+                    ↓
+        Split raw data (artist-stratified, temporal)
+                    ↓
+        Feature Pipeline (fit on train only)
+                    ↓
+        LightGBM Model → Price Prediction (with 95% CI)
+```
+
+## Feature Engineering (44 features)
+
+| Domain | Features | Description |
+|--------|----------|-------------|
+| Artist | 7 | Historical avg/median price, event count, premium ratio |
+| Popularity | 6 | YouTube Music/Last.fm integrated popularity score |
+| Regional | 7 | City/country/global price ratios, market strength |
+| Event | 8 | City tier, day of week, season, venue capacity |
+| Seating | 6 | Zone encoding (floor to balcony), row number, price ratio |
+| Time-series | 6 | Days to event, urgency buckets |
+| Momentum | 4 | 7d/30d price momentum, volatility |
+
+## Training Pipeline
+
+The training pipeline prevents data leakage by splitting before feature extraction:
+
+1. Cap price outliers at 99th percentile
+2. Split raw data temporally with artist stratification
+3. Fit feature pipeline on training data only
+4. Transform train/val/test independently
+5. Train LightGBM with early stopping (patience=100)
 
 ## Configuration
 
-Environment variables (set in `.env` or shell):
+Environment variables (set in `.env`):
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `TICKETMASTER_API_KEY` | Yes | - | API key from developer.ticketmaster.com |
-| `DATA_DIR` | No | `./data` | Directory for data storage |
-| `SNAPSHOT_INTERVAL_HOURS` | No | `6` | Hours between snapshot collections |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TICKETMASTER_API_KEY` | Yes | Ticketmaster Discovery API key |
+| `LASTFM_API_KEY` | No | Last.fm API key (for popularity features) |
+| `DATA_DIR` | No | Data storage directory (default: `./data`) |
 
-## Data Schemas
-
-### EventMetadata
-
-Event information from Ticketmaster:
-- Event ID, type (concert/sports/theater), datetime
-- Artist/team name
-- Venue details (ID, name, city, capacity)
-
-### PriceSnapshot
-
-Point-in-time price observation:
-- Event ID, seat zone, timestamp
-- Price (min/avg/max)
-- Inventory remaining
-- Days until event
-
-### SeatZone
+## Seat Zones
 
 Standardized zones for cross-venue learning:
-- `floor_vip` - Floor / VIP sections
-- `lower_tier` - Lower bowl
-- `upper_tier` - Upper bowl
-- `balcony` - Balcony / restricted view
 
-## Data Storage
-
-### Storage Layout
-
-```
-data/raw/
-├── events/
-│   └── events.parquet           # All event metadata
-└── snapshots/
-    └── year=2026/
-        └── month=01/
-            └── snapshots.parquet  # Partitioned by time
-```
-
-### Price Derivation
-
-Since the Ticketmaster Discovery API only provides `priceRanges` (min/max) per event, zone-level prices are derived using configurable ratios:
-
-| Zone | Price Ratio |
-|------|-------------|
-| Floor/VIP | 100% of max |
-| Lower Tier | 70% of range |
-| Upper Tier | 45% of range |
-| Balcony | 25% of range |
+| Zone | Price Ratio | Encoding |
+|------|-------------|----------|
+| Floor/VIP | 100% | 3 |
+| Lower Tier | 70% | 2 |
+| Upper Tier | 45% | 1 |
+| Balcony | 25% | 0 |
 
 ## Development
 
 ```bash
-# Format code
-make format
-
-# Run tests with coverage report
-make test-cov
-
-# Clean build artifacts
-make clean
+make format     # Auto-format code (ruff)
+make lint       # Lint check
+make typecheck  # mypy type checking
+make test       # Run pytest
+make check      # All of the above
 ```
 
 ## Roadmap
 
 - [x] **M0**: Foundation (repo structure, API client, schemas)
 - [x] **M1**: Data pipeline (batch ingestion, storage, validation)
-- [ ] **M2**: Feature engineering
-- [ ] **M3**: Model training
+- [x] **M2**: Feature engineering (44 features, 7 domains)
+- [x] **M3**: Model training (LightGBM, quantile regression, leak-free pipeline)
 - [ ] **M4**: Backtesting & validation
 - [ ] **M5**: Deployment
 

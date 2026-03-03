@@ -83,22 +83,31 @@ class ModelEvaluator:
         n_val: int = 0,
         training_time: float = 0.0,
         model_version: str = "v1",
+        log_target: bool = False,
     ) -> TrainingMetrics:
         """Full model evaluation.
 
         Args:
             model: Trained model
             X_test: Test features
-            y_test: Test target
+            y_test: Test target (raw scale when log_target=True)
             n_train: Number of training samples
             n_val: Number of validation samples
             training_time: Training time in seconds
             model_version: Model version string
+            log_target: If True, inverse-transform predictions from log-space
 
         Returns:
             TrainingMetrics object
         """
         y_pred = model.predict(X_test)
+
+        if log_target:
+            # Model predicts in log-space; inverse-transform to raw prices
+            y_pred = np.expm1(y_pred)
+            # Clip negative predictions (can occur from expm1 on small values)
+            y_pred = np.clip(y_pred, 0, None)
+
         metrics = ModelEvaluator.compute_metrics(y_test, y_pred)
 
         # Get feature importance

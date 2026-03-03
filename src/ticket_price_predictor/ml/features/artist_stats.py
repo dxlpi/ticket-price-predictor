@@ -39,6 +39,7 @@ class ArtistStatsCache:
     """Cache of artist statistics computed from listing data."""
 
     PREMIUM_THRESHOLD = _config.premium_price_threshold  # From centralized config
+    SMOOTHING_FACTOR = 50  # Bayesian smoothing: pulls small-sample artists toward global mean
 
     def __init__(self) -> None:
         """Initialize empty cache."""
@@ -79,16 +80,24 @@ class ArtistStatsCache:
             premium_ratio=(df["listing_price"] > self.PREMIUM_THRESHOLD).mean(),
         )
 
-        # Compute per-artist stats
+        # Compute per-artist stats with Bayesian smoothing on avg/median
         self._stats = {}
         grouped = df.groupby("artist_or_team")
+        global_avg = self._global_stats.avg_price
+        global_median = self._global_stats.median_price
+        m = self.SMOOTHING_FACTOR
 
         for artist, group in grouped:
             artist_key = self._normalize_artist(str(artist))
+            n = len(group)
+            group_mean = group["listing_price"].mean()
+            group_median = group["listing_price"].median()
+            smoothed_avg = (n * group_mean + m * global_avg) / (n + m)
+            smoothed_median = (n * group_median + m * global_median) / (n + m)
             self._stats[artist_key] = ArtistStats(
                 artist_name=str(artist),
-                avg_price=group["listing_price"].mean(),
-                median_price=group["listing_price"].median(),
+                avg_price=smoothed_avg,
+                median_price=smoothed_median,
                 price_std=group["listing_price"].std() if len(group) > 1 else 0.0,
                 event_count=group["event_id"].nunique() if "event_id" in group.columns else 1,
                 listing_count=len(group),

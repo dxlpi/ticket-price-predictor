@@ -8,288 +8,210 @@ from ticket_price_predictor.popularity.aggregator import (
     PopularityAggregator,
     PopularityTier,
 )
-from ticket_price_predictor.popularity.bandsintown import (
-    BandsintownMetrics,
-    BandsintownPopularity,
-)
 from ticket_price_predictor.popularity.cache import PopularityCache
+from ticket_price_predictor.popularity.lastfm import (
+    LastfmMetrics,
+    LastfmPopularity,
+)
 from ticket_price_predictor.popularity.service import PopularityService
-from ticket_price_predictor.popularity.songkick import (
-    SongkickMetrics,
-    SongkickPopularity,
-)
-from ticket_price_predictor.popularity.spotify import (
-    SpotifyMetrics,
-    SpotifyPopularity,
+from ticket_price_predictor.popularity.youtube import (
+    YouTubeMetrics,
+    YouTubePopularity,
 )
 
 # ============================================================================
-# SpotifyPopularity Tests
+# YouTubePopularity Tests
 # ============================================================================
 
 
-class TestSpotifyPopularity:
-    """Tests for SpotifyPopularity."""
+class TestYouTubePopularity:
+    """Tests for YouTubePopularity."""
 
-    def test_initialization_with_valid_credentials(self):
-        """Test initialization with valid credentials."""
-        # Create a client and manually set it up
-        client = SpotifyPopularity.__new__(SpotifyPopularity)
-        client.sp = MagicMock()
+    def test_initialization_available(self):
+        """Test initialization when ytmusicapi is available."""
+        client = YouTubePopularity.__new__(YouTubePopularity)
+        client._ytmusic = MagicMock()
         client._available = True
 
         assert client.available is True
-        assert client.sp is not None
 
-    def test_initialization_with_invalid_credentials(self):
-        """Test initialization with invalid credentials (API error)."""
-        # Create a client and manually set failed state
-        client = SpotifyPopularity.__new__(SpotifyPopularity)
-        client.sp = None
+    def test_initialization_unavailable(self):
+        """Test initialization when ytmusicapi is not available."""
+        client = YouTubePopularity.__new__(YouTubePopularity)
+        client._ytmusic = None
         client._available = False
 
         assert client.available is False
-        assert client.sp is None
 
     def test_get_artist_metrics_success(self):
         """Test successful artist lookup."""
-        # Create and setup client manually
-        client = SpotifyPopularity.__new__(SpotifyPopularity)
-        mock_sp = MagicMock()
-        mock_sp.search.return_value = {
-            "artists": {
-                "items": [
-                    {
-                        "id": "abc123",
-                        "popularity": 85,
-                        "followers": {"total": 50000000},
-                        "genres": ["pop", "dance pop"],
-                    }
-                ]
-            }
+        client = YouTubePopularity.__new__(YouTubePopularity)
+        mock_ytmusic = MagicMock()
+
+        # Mock search results
+        mock_ytmusic.search.return_value = [{"browseId": "UC_abc123", "artist": "Taylor Swift"}]
+
+        # Mock artist info
+        mock_ytmusic.get_artist.return_value = {
+            "name": "Taylor Swift",
+            "subscribers": "120M subscribers",
+            "views": "45,000,000,000 views",
         }
-        client.sp = mock_sp
+
+        client._ytmusic = mock_ytmusic
         client._available = True
 
         result = client.get_artist_metrics("Taylor Swift")
 
         assert result is not None
-        assert isinstance(result, SpotifyMetrics)
-        assert result.spotify_id == "abc123"
-        assert result.popularity == 85
-        assert result.followers == 50000000
-        assert result.genres == ["pop", "dance pop"]
+        assert isinstance(result, YouTubeMetrics)
+        assert result.channel_id == "UC_abc123"
+        assert result.name == "Taylor Swift"
+        assert result.subscriber_count == 120_000_000
+        assert result.view_count == 45_000_000_000
 
     def test_get_artist_metrics_not_found(self):
         """Test when artist is not found."""
-        # Create and setup client manually
-        client = SpotifyPopularity.__new__(SpotifyPopularity)
-        mock_sp = MagicMock()
-        mock_sp.search.return_value = {"artists": {"items": []}}
-        client.sp = mock_sp
+        client = YouTubePopularity.__new__(YouTubePopularity)
+        mock_ytmusic = MagicMock()
+        mock_ytmusic.search.return_value = []
+
+        client._ytmusic = mock_ytmusic
         client._available = True
 
         result = client.get_artist_metrics("Unknown Artist")
-
         assert result is None
 
     def test_get_artist_metrics_api_error(self):
         """Test graceful handling of API errors."""
-        # Create and setup client manually
-        client = SpotifyPopularity.__new__(SpotifyPopularity)
-        mock_sp = MagicMock()
-        mock_sp.search.side_effect = Exception("API Error")
-        client.sp = mock_sp
+        client = YouTubePopularity.__new__(YouTubePopularity)
+        mock_ytmusic = MagicMock()
+        mock_ytmusic.search.side_effect = Exception("API Error")
+
+        client._ytmusic = mock_ytmusic
         client._available = True
 
         result = client.get_artist_metrics("Test Artist")
-
         assert result is None
 
     def test_get_artist_metrics_unavailable_client(self):
         """Test when client is not available."""
-        # Create unavailable client
-        client = SpotifyPopularity.__new__(SpotifyPopularity)
-        client.sp = None
+        client = YouTubePopularity.__new__(YouTubePopularity)
+        client._ytmusic = None
         client._available = False
 
         result = client.get_artist_metrics("Test")
-
         assert result is None
 
+    def test_parse_subscriber_count(self):
+        """Test subscriber count parsing."""
+        assert YouTubePopularity._parse_subscriber_count("120M subscribers") == 120_000_000
+        assert YouTubePopularity._parse_subscriber_count("1.5M subscribers") == 1_500_000
+        assert YouTubePopularity._parse_subscriber_count("500K subscribers") == 500_000
+        assert YouTubePopularity._parse_subscriber_count("1.2B subscribers") == 1_200_000_000
+        assert YouTubePopularity._parse_subscriber_count("invalid") == 0
+
+    def test_parse_view_count(self):
+        """Test view count parsing."""
+        assert YouTubePopularity._parse_view_count("45,000,000,000 views") == 45_000_000_000
+        assert YouTubePopularity._parse_view_count("1.5M views") == 1_500_000
+        assert YouTubePopularity._parse_view_count("500K views") == 500_000
+        assert YouTubePopularity._parse_view_count("invalid") == 0
+
 
 # ============================================================================
-# SongkickPopularity Tests
+# LastfmPopularity Tests
 # ============================================================================
 
 
-class TestSongkickPopularity:
-    """Tests for SongkickPopularity."""
+class TestLastfmPopularity:
+    """Tests for LastfmPopularity."""
 
     def test_initialization(self):
         """Test initialization with API key."""
-        client = SongkickPopularity("test_key")
+        client = LastfmPopularity("test_key")
         assert client.available is True
         assert client.api_key == "test_key"
 
     def test_initialization_missing_key(self):
         """Test initialization without API key."""
-        client = SongkickPopularity("")
+        client = LastfmPopularity("")
         assert client.available is False
 
     def test_get_artist_metrics_success(self):
         """Test successful artist lookup."""
-        with patch("ticket_price_predictor.popularity.songkick.httpx.Client") as mock_client:
-            # Mock search response
-            mock_response_search = MagicMock()
-            mock_response_search.json.return_value = {
-                "resultsPage": {
-                    "results": {
-                        "artist": [
-                            {
-                                "id": 123,
-                                "displayName": "Taylor Swift",
-                                "onTourUntil": "2024-12-31",
-                            }
+        with patch("ticket_price_predictor.popularity.lastfm.httpx.Client") as mock_client:
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                "artist": {
+                    "name": "Taylor Swift",
+                    "stats": {
+                        "listeners": "25000000",
+                        "playcount": "500000000",
+                    },
+                    "tags": {
+                        "tag": [
+                            {"name": "pop"},
+                            {"name": "country"},
                         ]
-                    }
+                    },
                 }
             }
-            mock_response_search.raise_for_status = MagicMock()
-
-            # Mock artist detail response
-            mock_response_detail = MagicMock()
-            mock_response_detail.json.return_value = {
-                "resultsPage": {
-                    "results": {
-                        "artist": {
-                            "id": 123,
-                            "onTourUntil": "2024-12-31",
-                        }
-                    }
-                }
-            }
-            mock_response_detail.raise_for_status = MagicMock()
+            mock_response.raise_for_status = MagicMock()
 
             mock_client_instance = MagicMock()
-            mock_client_instance.__enter__.return_value.get.side_effect = [
-                mock_response_search,
-                mock_response_detail,
-            ]
+            mock_client_instance.__enter__.return_value.get.return_value = mock_response
             mock_client.return_value = mock_client_instance
 
-            client = SongkickPopularity("test_key")
+            client = LastfmPopularity("test_key")
             result = client.get_artist_metrics("Taylor Swift")
 
             assert result is not None
-            assert isinstance(result, SongkickMetrics)
-            assert result.songkick_id == 123
-            assert result.display_name == "Taylor Swift"
-            assert result.on_tour is True
-            assert result.tracker_count == 1  # Based on onTourUntil proxy
+            assert isinstance(result, LastfmMetrics)
+            assert result.name == "Taylor Swift"
+            assert result.listener_count == 25_000_000
+            assert result.play_count == 500_000_000
+            assert result.tags == ["pop", "country"]
 
     def test_get_artist_metrics_not_found(self):
         """Test when artist is not found."""
-        with patch("ticket_price_predictor.popularity.songkick.httpx.Client") as mock_client:
+        with patch("ticket_price_predictor.popularity.lastfm.httpx.Client") as mock_client:
             mock_response = MagicMock()
-            mock_response.json.return_value = {"resultsPage": {"results": {}}}
+            mock_response.json.return_value = {"artist": None}
             mock_response.raise_for_status = MagicMock()
 
             mock_client_instance = MagicMock()
             mock_client_instance.__enter__.return_value.get.return_value = mock_response
             mock_client.return_value = mock_client_instance
 
-            client = SongkickPopularity("test_key")
-            result = client.get_artist_metrics("Unknown Artist")
-
-            assert result is None
-
-    def test_get_artist_metrics_unavailable(self):
-        """Test when client is not available (no API key)."""
-        client = SongkickPopularity("")
-        result = client.get_artist_metrics("Test Artist")
-        assert result is None
-
-
-# ============================================================================
-# BandsintownPopularity Tests
-# ============================================================================
-
-
-class TestBandsintownPopularity:
-    """Tests for BandsintownPopularity."""
-
-    def test_initialization(self):
-        """Test initialization with app ID."""
-        client = BandsintownPopularity("test_app_id")
-        assert client.available is True
-        assert client.app_id == "test_app_id"
-
-    def test_initialization_missing_app_id(self):
-        """Test initialization without app ID."""
-        client = BandsintownPopularity("")
-        assert client.available is False
-
-    def test_get_artist_metrics_success(self):
-        """Test successful artist lookup."""
-        with patch("ticket_price_predictor.popularity.bandsintown.httpx.Client") as mock_client:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "id": "456",
-                "tracker_count": 1500000,
-                "upcoming_event_count": 25,
-            }
-            mock_response.raise_for_status = MagicMock()
-
-            mock_client_instance = MagicMock()
-            mock_client_instance.__enter__.return_value.get.return_value = mock_response
-            mock_client.return_value = mock_client_instance
-
-            client = BandsintownPopularity("test_app_id")
-            result = client.get_artist_metrics("BTS")
-
-            assert result is not None
-            assert isinstance(result, BandsintownMetrics)
-            assert result.bandsintown_id == "456"
-            assert result.tracker_count == 1500000
-            assert result.upcoming_event_count == 25
-
-    def test_get_artist_metrics_404(self):
-        """Test handling of 404 (artist not found)."""
-        with patch("ticket_price_predictor.popularity.bandsintown.httpx.Client") as mock_client:
-            mock_response = MagicMock()
-            mock_response.status_code = 404
-
-            mock_client_instance = MagicMock()
-            mock_client_instance.__enter__.return_value.get.return_value = mock_response
-            mock_client.return_value = mock_client_instance
-
-            client = BandsintownPopularity("test_app_id")
+            client = LastfmPopularity("test_key")
             result = client.get_artist_metrics("Unknown Artist")
 
             assert result is None
 
     def test_get_artist_metrics_error_response(self):
         """Test handling of error responses."""
-        with patch("ticket_price_predictor.popularity.bandsintown.httpx.Client") as mock_client:
+        with patch("ticket_price_predictor.popularity.lastfm.httpx.Client") as mock_client:
             mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"error": "Invalid artist"}
+            mock_response.json.return_value = {
+                "error": 6,
+                "message": "Artist not found",
+            }
             mock_response.raise_for_status = MagicMock()
 
             mock_client_instance = MagicMock()
             mock_client_instance.__enter__.return_value.get.return_value = mock_response
             mock_client.return_value = mock_client_instance
 
-            client = BandsintownPopularity("test_app_id")
+            client = LastfmPopularity("test_key")
             result = client.get_artist_metrics("Test Artist")
 
+            # No "artist" key in response -> None
             assert result is None
 
     def test_get_artist_metrics_unavailable(self):
-        """Test when client is not available (no app ID)."""
-        client = BandsintownPopularity("")
+        """Test when client is not available (no API key)."""
+        client = LastfmPopularity("")
         result = client.get_artist_metrics("Test Artist")
         assert result is None
 
@@ -307,30 +229,43 @@ class TestPopularityAggregator:
         aggregator = PopularityAggregator()
         result = aggregator.calculate_score(
             artist_name="Taylor Swift",
-            spotify_popularity=95,
-            spotify_followers=80_000_000,
-            songkick_trackers=5_000_000,
-            bandsintown_trackers=3_000_000,
+            youtube_subscribers=80_000_000,
+            youtube_views=45_000_000_000,
+            lastfm_listeners=25_000_000,
+            lastfm_play_count=500_000_000,
         )
         assert result.tier == PopularityTier.HIGH
         assert result.popularity_score > 70
         assert len(result.sources_available) == 4
-        assert "spotify_popularity" in result.sources_available
-        assert "spotify_followers" in result.sources_available
-        assert "songkick_trackers" in result.sources_available
-        assert "bandsintown_trackers" in result.sources_available
+        assert "youtube_subscribers" in result.sources_available
+        assert "youtube_views" in result.sources_available
+        assert "lastfm_listeners" in result.sources_available
+        assert "lastfm_play_count" in result.sources_available
 
-    def test_calculate_score_spotify_only(self):
-        """Test with only Spotify data."""
+    def test_calculate_score_youtube_only(self):
+        """Test with only YouTube data."""
         aggregator = PopularityAggregator()
         result = aggregator.calculate_score(
             artist_name="Test Artist",
-            spotify_popularity=50,
-            spotify_followers=100_000,
+            youtube_subscribers=1_000_000,
+            youtube_views=500_000_000,
         )
-        assert result.tier == PopularityTier.MEDIUM
-        assert "spotify_popularity" in result.sources_available
-        assert "spotify_followers" in result.sources_available
+        assert result.popularity_score > 0
+        assert "youtube_subscribers" in result.sources_available
+        assert "youtube_views" in result.sources_available
+        assert len(result.sources_available) == 2
+
+    def test_calculate_score_lastfm_only(self):
+        """Test with only Last.fm data."""
+        aggregator = PopularityAggregator()
+        result = aggregator.calculate_score(
+            artist_name="Test Artist",
+            lastfm_listeners=5_000_000,
+            lastfm_play_count=100_000_000,
+        )
+        assert result.popularity_score > 0
+        assert "lastfm_listeners" in result.sources_available
+        assert "lastfm_play_count" in result.sources_available
         assert len(result.sources_available) == 2
 
     def test_calculate_score_no_sources(self):
@@ -346,17 +281,24 @@ class TestPopularityAggregator:
         aggregator = PopularityAggregator()
 
         # High tier (>= 70)
-        high = aggregator.calculate_score("High", spotify_popularity=90)
+        high = aggregator.calculate_score(
+            "High",
+            youtube_subscribers=80_000_000,
+            youtube_views=40_000_000_000,
+            lastfm_listeners=25_000_000,
+            lastfm_play_count=400_000_000,
+        )
         assert high.tier == PopularityTier.HIGH
         assert high.popularity_score >= 70
 
-        # Medium tier (40-69)
-        medium = aggregator.calculate_score("Medium", spotify_popularity=50)
-        assert medium.tier == PopularityTier.MEDIUM
-        assert 40 <= medium.popularity_score < 70
-
         # Low tier (< 40)
-        low = aggregator.calculate_score("Low", spotify_popularity=20)
+        low = aggregator.calculate_score(
+            "Low",
+            youtube_subscribers=1_000,
+            youtube_views=50_000,
+            lastfm_listeners=500,
+            lastfm_play_count=2_000,
+        )
         assert low.tier == PopularityTier.LOW
         assert low.popularity_score < 40
 
@@ -393,10 +335,10 @@ class TestPopularityAggregator:
 
         # All sources
         metrics = {
-            "spotify_popularity": 80.0,
-            "spotify_followers": 70.0,
-            "songkick_trackers": 60.0,
-            "bandsintown_trackers": 50.0,
+            "youtube_subscribers": 80.0,
+            "youtube_views": 70.0,
+            "lastfm_listeners": 60.0,
+            "lastfm_play_count": 50.0,
         }
         sources = list(metrics.keys())
         score = aggregator._weighted_score(metrics, sources)
@@ -411,12 +353,17 @@ class TestPopularityAggregator:
         """Test weight redistribution when some sources are missing."""
         aggregator = PopularityAggregator()
 
-        # Only Spotify popularity
-        result1 = aggregator.calculate_score(artist_name="Test1", spotify_popularity=80)
+        # Only YouTube subscribers
+        result1 = aggregator.calculate_score(
+            artist_name="Test1",
+            youtube_subscribers=1_000_000,
+        )
 
-        # Spotify popularity + followers
+        # YouTube subscribers + Last.fm listeners
         result2 = aggregator.calculate_score(
-            artist_name="Test2", spotify_popularity=80, spotify_followers=5_000_000
+            artist_name="Test2",
+            youtube_subscribers=1_000_000,
+            lastfm_listeners=5_000_000,
         )
 
         # Both should have valid scores
@@ -439,7 +386,7 @@ class TestPopularityCache:
             name="Test Artist",
             popularity_score=75.0,
             tier=PopularityTier.HIGH,
-            sources_available=["spotify_popularity"],
+            sources_available=["youtube_subscribers"],
         )
         cache.set("Test Artist", popularity)
 
@@ -536,46 +483,37 @@ class TestPopularityService:
 
     def test_initialization_with_env_vars(self, monkeypatch, tmp_path):
         """Test initialization with environment variables."""
-        monkeypatch.setenv("SPOTIFY_CLIENT_ID", "env_id")
-        monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "env_secret")
-        monkeypatch.setenv("SONGKICK_API_KEY", "env_songkick")
-        monkeypatch.setenv("BANDSINTOWN_APP_ID", "env_bandsintown")
+        monkeypatch.setenv("LASTFM_API_KEY", "env_lastfm")
 
-        # Create a mock Spotify client
-        mock_spotify = MagicMock(spec=SpotifyPopularity)
-        mock_spotify.available = True
+        # Mock YouTube client
+        mock_youtube = MagicMock(spec=YouTubePopularity)
+        mock_youtube.available = True
 
-        # Patch the SpotifyPopularity constructor
         with patch(
-            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+            "ticket_price_predictor.popularity.service.YouTubePopularity",
+            return_value=mock_youtube,
         ):
             service = PopularityService(cache_dir=tmp_path)
 
-        assert service.spotify is not None
-        assert service.songkick is not None
-        assert service.bandsintown is not None
+        assert service.youtube is not None
+        assert service.lastfm is not None
 
     def test_initialization_with_explicit_params(self, tmp_path):
         """Test initialization with explicit parameters."""
-        # Create a mock Spotify client
-        mock_spotify = MagicMock(spec=SpotifyPopularity)
-        mock_spotify.available = True
+        mock_youtube = MagicMock(spec=YouTubePopularity)
+        mock_youtube.available = True
 
-        # Patch the SpotifyPopularity constructor
         with patch(
-            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+            "ticket_price_predictor.popularity.service.YouTubePopularity",
+            return_value=mock_youtube,
         ):
             service = PopularityService(
-                spotify_client_id="param_id",
-                spotify_client_secret="param_secret",
-                songkick_api_key="param_songkick",
-                bandsintown_app_id="param_bandsintown",
+                lastfm_api_key="param_lastfm",
                 cache_dir=tmp_path,
             )
 
-        assert service.spotify is not None
-        assert service.songkick is not None
-        assert service.bandsintown is not None
+        assert service.youtube is not None
+        assert service.lastfm is not None
 
     def test_get_artist_popularity_cache_hit(self, tmp_path):
         """Test get_artist_popularity with cache hit."""
@@ -586,8 +524,8 @@ class TestPopularityService:
             name="Cached Artist",
             popularity_score=75.0,
             tier=PopularityTier.HIGH,
-            spotify_popularity=85,
-            sources_available=["spotify_popularity"],
+            youtube_subscribers=50_000_000,
+            sources_available=["youtube_subscribers"],
         )
         service.cache.set("Cached Artist", cached_pop)
 
@@ -600,32 +538,43 @@ class TestPopularityService:
 
     def test_get_artist_popularity_cache_miss(self, tmp_path):
         """Test get_artist_popularity with cache miss (fetch from APIs)."""
-        # Create a mock Spotify client
-        mock_spotify = MagicMock(spec=SpotifyPopularity)
-        mock_spotify.available = True
-        mock_spotify.get_artist_metrics.return_value = SpotifyMetrics(
-            spotify_id="123",
-            popularity=80,
-            followers=10_000_000,
-            genres=["pop"],
+        mock_youtube = MagicMock(spec=YouTubePopularity)
+        mock_youtube.available = True
+        mock_youtube.get_artist_metrics.return_value = YouTubeMetrics(
+            channel_id="UC_abc",
+            name="New Artist",
+            subscriber_count=10_000_000,
+            view_count=5_000_000_000,
         )
 
-        # Patch the SpotifyPopularity constructor
+        mock_lastfm = MagicMock(spec=LastfmPopularity)
+        mock_lastfm.available = True
+        mock_lastfm.get_artist_metrics.return_value = LastfmMetrics(
+            name="New Artist",
+            listener_count=5_000_000,
+            play_count=100_000_000,
+            tags=["pop"],
+        )
+
         with patch(
-            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+            "ticket_price_predictor.popularity.service.YouTubePopularity",
+            return_value=mock_youtube,
         ):
             service = PopularityService(
-                spotify_client_id="test_id",
-                spotify_client_secret="test_secret",
+                lastfm_api_key="test_key",
                 cache_dir=tmp_path,
             )
+            # Manually set lastfm mock (env var fallback creates real one)
+            service.lastfm = mock_lastfm
 
             result = service.get_artist_popularity("New Artist")
 
         assert result.name == "New Artist"
         assert result.popularity_score > 0
-        assert result.spotify_popularity == 80
-        assert result.spotify_followers == 10_000_000
+        assert result.youtube_subscribers == 10_000_000
+        assert result.youtube_views == 5_000_000_000
+        assert result.lastfm_listeners == 5_000_000
+        assert result.lastfm_play_count == 100_000_000
 
         # Verify cached
         cached = service.cache.get("New Artist")
@@ -695,38 +644,59 @@ class TestPopularityIntegration:
 
     def test_end_to_end_workflow(self, tmp_path):
         """Test complete workflow from API fetch to ranking."""
-        # Create a mock Spotify client
-        mock_spotify = MagicMock(spec=SpotifyPopularity)
-        mock_spotify.available = True
+        mock_youtube = MagicMock(spec=YouTubePopularity)
+        mock_youtube.available = True
 
-        def mock_get_artist_metrics(artist_name):
+        def mock_yt_metrics(artist_name):
             if "Taylor Swift" in artist_name:
-                return SpotifyMetrics(
-                    spotify_id="ts123",
-                    popularity=95,
-                    followers=80_000_000,
-                    genres=["pop"],
+                return YouTubeMetrics(
+                    channel_id="UC_ts",
+                    name="Taylor Swift",
+                    subscriber_count=80_000_000,
+                    view_count=40_000_000_000,
                 )
             elif "BTS" in artist_name:
-                return SpotifyMetrics(
-                    spotify_id="bts456",
-                    popularity=90,
-                    followers=60_000_000,
-                    genres=["k-pop"],
+                return YouTubeMetrics(
+                    channel_id="UC_bts",
+                    name="BTS",
+                    subscriber_count=75_000_000,
+                    view_count=35_000_000_000,
                 )
             return None
 
-        mock_spotify.get_artist_metrics = mock_get_artist_metrics
+        mock_youtube.get_artist_metrics = mock_yt_metrics
 
-        # Patch the SpotifyPopularity constructor
+        mock_lastfm = MagicMock(spec=LastfmPopularity)
+        mock_lastfm.available = True
+
+        def mock_lfm_metrics(artist_name):
+            if "Taylor Swift" in artist_name:
+                return LastfmMetrics(
+                    name="Taylor Swift",
+                    listener_count=25_000_000,
+                    play_count=500_000_000,
+                    tags=["pop"],
+                )
+            elif "BTS" in artist_name:
+                return LastfmMetrics(
+                    name="BTS",
+                    listener_count=15_000_000,
+                    play_count=300_000_000,
+                    tags=["k-pop"],
+                )
+            return None
+
+        mock_lastfm.get_artist_metrics = mock_lfm_metrics
+
         with patch(
-            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+            "ticket_price_predictor.popularity.service.YouTubePopularity",
+            return_value=mock_youtube,
         ):
             service = PopularityService(
-                spotify_client_id="test_id",
-                spotify_client_secret="test_secret",
+                lastfm_api_key="test_key",
                 cache_dir=tmp_path,
             )
+            service.lastfm = mock_lastfm
 
             # Rank performers
             ranked = service.rank_performers(["BTS", "Taylor Swift"])
@@ -742,20 +712,15 @@ class TestPopularityIntegration:
 
     def test_fallback_to_low_tier_on_error(self, tmp_path):
         """Test that API errors result in low-tier fallback."""
-        # Create a mock Spotify client that returns None (simulating error handled internally)
-        mock_spotify = MagicMock(spec=SpotifyPopularity)
-        mock_spotify.available = True
-        mock_spotify.get_artist_metrics.return_value = None  # Simulates internal error handling
+        mock_youtube = MagicMock(spec=YouTubePopularity)
+        mock_youtube.available = True
+        mock_youtube.get_artist_metrics.return_value = None
 
-        # Patch the SpotifyPopularity constructor
         with patch(
-            "ticket_price_predictor.popularity.service.SpotifyPopularity", return_value=mock_spotify
+            "ticket_price_predictor.popularity.service.YouTubePopularity",
+            return_value=mock_youtube,
         ):
-            service = PopularityService(
-                spotify_client_id="test_id",
-                spotify_client_secret="test_secret",
-                cache_dir=tmp_path,
-            )
+            service = PopularityService(cache_dir=tmp_path)
 
             result = service.get_artist_popularity("Unknown Artist")
 

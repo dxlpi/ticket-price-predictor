@@ -42,6 +42,7 @@ ZONE_KEYWORDS: dict[SeatZone, list[str]] = {
         "upper",
         "200",
         "300",
+        "400",
         "mezzanine",
         "club level",
         "press level",
@@ -50,7 +51,6 @@ ZONE_KEYWORDS: dict[SeatZone, list[str]] = {
         "balcony",
         "gallery",
         "nosebleed",
-        "400",
         "500",
         "rear",
         "obstructed",
@@ -138,7 +138,7 @@ class SeatZoneMapper:
                 return SeatZone.FLOOR_VIP
             elif section_num < 200:
                 return SeatZone.LOWER_TIER
-            elif section_num < 400:
+            elif section_num < 500:
                 return SeatZone.UPPER_TIER
             else:
                 return SeatZone.BALCONY

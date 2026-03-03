@@ -66,11 +66,12 @@ class TestSeatZoneMapper:
         assert mapper.normalize_zone_name("Section 200") == SeatZone.UPPER_TIER
         assert mapper.normalize_zone_name("Mezzanine") == SeatZone.UPPER_TIER
         assert mapper.normalize_zone_name("Section 300") == SeatZone.UPPER_TIER
+        assert mapper.normalize_zone_name("Section 400") == SeatZone.UPPER_TIER
 
     def test_normalize_balcony_keywords(self, mapper: SeatZoneMapper):
         """Test normalizing balcony section names."""
         assert mapper.normalize_zone_name("Balcony") == SeatZone.BALCONY
-        assert mapper.normalize_zone_name("Section 400") == SeatZone.BALCONY
+        assert mapper.normalize_zone_name("Section 500") == SeatZone.BALCONY
         assert mapper.normalize_zone_name("Nosebleed Section") == SeatZone.BALCONY
         assert mapper.normalize_zone_name("Limited View") == SeatZone.BALCONY
 
@@ -79,7 +80,8 @@ class TestSeatZoneMapper:
         assert mapper.normalize_zone_name("Section 50") == SeatZone.FLOOR_VIP
         assert mapper.normalize_zone_name("Section 120") == SeatZone.LOWER_TIER
         assert mapper.normalize_zone_name("Section 250") == SeatZone.UPPER_TIER
-        assert mapper.normalize_zone_name("Section 450") == SeatZone.BALCONY
+        assert mapper.normalize_zone_name("Section 450") == SeatZone.UPPER_TIER
+        assert mapper.normalize_zone_name("Section 505") == SeatZone.BALCONY
 
     def test_normalize_unknown_defaults_to_upper(self, mapper: SeatZoneMapper):
         """Test that unknown sections default to upper tier."""

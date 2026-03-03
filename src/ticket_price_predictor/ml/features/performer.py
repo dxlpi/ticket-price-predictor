@@ -6,6 +6,7 @@ import pandas as pd
 
 from ticket_price_predictor.ml.features.artist_stats import ArtistStatsCache
 from ticket_price_predictor.ml.features.base import FeatureExtractor
+from ticket_price_predictor.normalization.seat_zones import SeatZoneMapper
 
 
 class PerformerFeatureExtractor(FeatureExtractor):
@@ -15,6 +16,8 @@ class PerformerFeatureExtractor(FeatureExtractor):
     instead of hardcoded artist lists.
     """
 
+    _ZONE_SMOOTHING = 20  # Bayesian smoothing factor for artist×zone medians
+
     def __init__(self, stats_cache: ArtistStatsCache | None = None) -> None:
         """Initialize extractor.
 
@@ -23,6 +26,10 @@ class PerformerFeatureExtractor(FeatureExtractor):
                         If None, will be computed during fit().
         """
         self._stats_cache = stats_cache or ArtistStatsCache()
+        self._zone_mapper = SeatZoneMapper()
+        # dict[(artist_key, zone_value)] -> smoothed median price
+        self._artist_zone_medians: dict[tuple[str, str], float] = {}
+        self._global_median: float = 150.0
 
     @property
     def feature_names(self) -> list[str]:
@@ -35,19 +42,48 @@ class PerformerFeatureExtractor(FeatureExtractor):
             "artist_listing_count",
             "artist_premium_ratio",
             "is_known_artist",
+            "artist_zone_median_price",
         ]
 
     def fit(self, df: pd.DataFrame) -> "PerformerFeatureExtractor":
         """Fit extractor by computing artist statistics.
 
         Args:
-            df: Training DataFrame with artist_or_team and listing_price columns
+            df: Training DataFrame with artist_or_team, listing_price, and
+                optionally section columns.
 
         Returns:
             self
         """
         if not self._stats_cache.is_fitted:
             self._stats_cache.fit(df)
+
+        # Compute global median for ultimate fallback
+        if "listing_price" in df.columns:
+            self._global_median = float(df["listing_price"].median())
+
+        # Build artist×zone median price lookup
+        self._artist_zone_medians = {}
+        if (
+            "section" in df.columns
+            and "listing_price" in df.columns
+            and "artist_or_team" in df.columns
+        ):
+            working = df[["artist_or_team", "section", "listing_price"]].copy()
+            working["_zone"] = working["section"].apply(
+                lambda s: self._zone_mapper.normalize_zone_name(str(s)).value
+            )
+            working["_artist_key"] = working["artist_or_team"].str.lower().str.strip()
+
+            m = self._ZONE_SMOOTHING
+            for (artist_key, zone_val), group in working.groupby(["_artist_key", "_zone"]):
+                n = len(group)
+                group_median = float(group["listing_price"].median())
+                artist_stats = self._stats_cache.get_stats(str(artist_key))
+                artist_median = artist_stats.median_price
+                smoothed = (n * group_median + m * artist_median) / (n + m)
+                self._artist_zone_medians[(str(artist_key), str(zone_val))] = smoothed
+
         return self
 
     def extract(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -73,12 +109,37 @@ class PerformerFeatureExtractor(FeatureExtractor):
             lambda a: 1 if self._stats_cache.is_known_artist(a) else 0
         )
 
+        # Artist × zone median price (Bayesian-smoothed)
+        def _lookup_zone_median(row: pd.Series) -> float:
+            artist_key = str(row["artist_or_team"]).lower().strip()
+            if "section" in row.index:
+                zone_val = self._zone_mapper.normalize_zone_name(str(row["section"])).value
+                key = (artist_key, zone_val)
+                if key in self._artist_zone_medians:
+                    return self._artist_zone_medians[key]
+            # Fallback to artist median
+            artist_stats = self._stats_cache.get_stats(artist_key)
+            if artist_stats.median_price > 0:
+                return artist_stats.median_price
+            return self._global_median
+
+        result["artist_zone_median_price"] = df.apply(_lookup_zone_median, axis=1)
+
         return result
 
     @property
     def stats_cache(self) -> ArtistStatsCache:
         """Return the artist stats cache."""
         return self._stats_cache
+
+    @property
+    def artist_stats_smoothing(self) -> int:
+        """Bayesian smoothing factor forwarded to the nested ArtistStatsCache."""
+        return self._stats_cache.SMOOTHING_FACTOR
+
+    @artist_stats_smoothing.setter
+    def artist_stats_smoothing(self, value: int) -> None:
+        self._stats_cache.SMOOTHING_FACTOR = value
 
     def get_params(self) -> dict[str, Any]:
         """Return extractor parameters."""

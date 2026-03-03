@@ -29,10 +29,10 @@ class ArtistPopularity:
     tier: PopularityTier
 
     # Raw metrics from each source
-    spotify_popularity: int | None = None
-    spotify_followers: int | None = None
-    songkick_trackers: int | None = None
-    bandsintown_trackers: int | None = None
+    youtube_subscribers: int | None = None
+    youtube_views: int | None = None
+    lastfm_listeners: int | None = None
+    lastfm_play_count: int | None = None
 
     # Metadata
     sources_available: list[str] = field(default_factory=list)
@@ -54,10 +54,10 @@ class PopularityAggregator:
 
     # Default weights for each source (from centralized config)
     WEIGHTS = {
-        "spotify_popularity": _config.weight_spotify_popularity,
-        "spotify_followers": _config.weight_spotify_followers,
-        "songkick_trackers": _config.weight_songkick_trackers,
-        "bandsintown_trackers": _config.weight_bandsintown_trackers,
+        "youtube_subscribers": _config.weight_youtube_subscribers,
+        "youtube_views": _config.weight_youtube_views,
+        "lastfm_listeners": _config.weight_lastfm_listeners,
+        "lastfm_play_count": _config.weight_lastfm_play_count,
     }
 
     # Tier thresholds (from config)
@@ -65,25 +65,27 @@ class PopularityAggregator:
     MEDIUM_THRESHOLD = _config.popularity_medium_threshold
 
     # Normalization constants (from config)
-    MAX_FOLLOWERS = _config.max_spotify_followers
-    MAX_TRACKERS = _config.max_tracker_count
+    MAX_YOUTUBE_SUBSCRIBERS = _config.max_youtube_subscribers
+    MAX_YOUTUBE_VIEWS = _config.max_youtube_views
+    MAX_LASTFM_LISTENERS = _config.max_lastfm_listeners
+    MAX_LASTFM_PLAY_COUNT = _config.max_lastfm_play_count
 
     def calculate_score(
         self,
         artist_name: str,
-        spotify_popularity: int | None = None,
-        spotify_followers: int | None = None,
-        songkick_trackers: int | None = None,
-        bandsintown_trackers: int | None = None,
+        youtube_subscribers: int | None = None,
+        youtube_views: int | None = None,
+        lastfm_listeners: int | None = None,
+        lastfm_play_count: int | None = None,
     ) -> ArtistPopularity:
         """Calculate combined popularity score with fallback weights.
 
         Args:
             artist_name: Artist name
-            spotify_popularity: Spotify popularity (0-100)
-            spotify_followers: Spotify follower count
-            songkick_trackers: Songkick tracker count
-            bandsintown_trackers: Bandsintown tracker count
+            youtube_subscribers: YouTube Music subscriber count
+            youtube_views: YouTube Music total view count
+            lastfm_listeners: Last.fm unique listener count
+            lastfm_play_count: Last.fm total play count
 
         Returns:
             ArtistPopularity with calculated score and tier
@@ -92,24 +94,26 @@ class PopularityAggregator:
         sources: list[str] = []
         metrics: dict[str, float] = {}
 
-        if spotify_popularity is not None:
-            sources.append("spotify_popularity")
-            metrics["spotify_popularity"] = float(spotify_popularity)  # Already 0-100
-
-        if spotify_followers is not None:
-            sources.append("spotify_followers")
-            metrics["spotify_followers"] = self._normalize_log(
-                spotify_followers, self.MAX_FOLLOWERS
+        if youtube_subscribers is not None:
+            sources.append("youtube_subscribers")
+            metrics["youtube_subscribers"] = self._normalize_log(
+                youtube_subscribers, self.MAX_YOUTUBE_SUBSCRIBERS
             )
 
-        if songkick_trackers is not None:
-            sources.append("songkick_trackers")
-            metrics["songkick_trackers"] = self._normalize_log(songkick_trackers, self.MAX_TRACKERS)
+        if youtube_views is not None:
+            sources.append("youtube_views")
+            metrics["youtube_views"] = self._normalize_log(youtube_views, self.MAX_YOUTUBE_VIEWS)
 
-        if bandsintown_trackers is not None:
-            sources.append("bandsintown_trackers")
-            metrics["bandsintown_trackers"] = self._normalize_log(
-                bandsintown_trackers, self.MAX_TRACKERS
+        if lastfm_listeners is not None:
+            sources.append("lastfm_listeners")
+            metrics["lastfm_listeners"] = self._normalize_log(
+                lastfm_listeners, self.MAX_LASTFM_LISTENERS
+            )
+
+        if lastfm_play_count is not None:
+            sources.append("lastfm_play_count")
+            metrics["lastfm_play_count"] = self._normalize_log(
+                lastfm_play_count, self.MAX_LASTFM_PLAY_COUNT
             )
 
         # Calculate weighted score with redistributed weights
@@ -127,10 +131,10 @@ class PopularityAggregator:
             name=artist_name,
             popularity_score=round(score, 2),
             tier=tier,
-            spotify_popularity=spotify_popularity,
-            spotify_followers=spotify_followers,
-            songkick_trackers=songkick_trackers,
-            bandsintown_trackers=bandsintown_trackers,
+            youtube_subscribers=youtube_subscribers,
+            youtube_views=youtube_views,
+            lastfm_listeners=lastfm_listeners,
+            lastfm_play_count=lastfm_play_count,
             sources_available=sources,
             last_updated=datetime.now(),
         )
