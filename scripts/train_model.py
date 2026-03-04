@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from ticket_price_predictor.ml.models.lightgbm_model import LightGBMModel
 from ticket_price_predictor.ml.training.data_loader import DataLoader
 from ticket_price_predictor.ml.training.trainer import ModelTrainer
 from ticket_price_predictor.popularity.service import PopularityService
@@ -128,6 +129,14 @@ def parse_args() -> argparse.Namespace:
         help="Disable temporal snapshot features",
     )
 
+    parser.add_argument(
+        "--loss",
+        type=str,
+        choices=["l2", "huber"],
+        default="l2",
+        help="Loss function: l2 (default, DART+MSE) or huber (GBDT+Huber, robust to outliers)",
+    )
+
     return parser.parse_args()
 
 
@@ -145,8 +154,17 @@ def main() -> None:
     print(f"Version: {args.version}")
     print(f"Preprocessing: {'enabled' if args.preprocess else 'disabled'}")
 
-    # Load hyperparameters from Optuna study if specified
+    # Select base params from loss flag (before Optuna study overrides)
     params = None
+    if args.loss == "huber" and args.model == "lightgbm":
+        params = dict(LightGBMModel.GBDT_PARAMS)
+        print(f"Loss: huber (GBDT+Huber, alpha={params['alpha']})")
+    else:
+        if args.loss == "huber" and args.model != "lightgbm":
+            print(f"WARNING: --loss huber only applies to lightgbm model, ignoring for {args.model}")
+        print("Loss: l2 (default DART+MSE)")
+
+    # Load hyperparameters from Optuna study if specified (overrides --loss params)
     if args.from_study:
         import optuna
 

@@ -157,6 +157,22 @@ class PopularityFeatureExtractor(FeatureExtractor):
 
         return result
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Pickle support: nullify unpicklable PopularityService before serialization.
+
+        PopularityService contains YTMusic() from ytmusicapi, which holds internal
+        HTTP session state that cannot be pickled. The fitted _artist_cache (dict of
+        ArtistPopularity) IS picklable and is preserved. After loading, inference
+        uses cached data only (no live API calls).
+        """
+        state = self.__dict__.copy()
+        state["_service"] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore state after unpickling. _service stays None; _artist_cache preserved."""
+        self.__dict__.update(state)
+
     def get_params(self) -> dict[str, Any]:
         """Return extractor parameters."""
         return {

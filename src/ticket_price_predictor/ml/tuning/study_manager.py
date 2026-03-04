@@ -111,6 +111,8 @@ class StudyManager:
         n_jobs: int = 1,
         target_col: str = "listing_price",
         pipeline_kwargs: dict[str, Any] | None = None,
+        use_cv: bool = False,
+        n_cv_folds: int = 3,
     ) -> optuna.Study:
         """Run optimization with leak-free raw-data objective.
 
@@ -125,6 +127,8 @@ class StudyManager:
             n_jobs: Parallel trials
             target_col: Target column name
             pipeline_kwargs: Base kwargs for FeaturePipeline
+            use_cv: Use TemporalGroupCV for more stable hyperparameter selection
+            n_cv_folds: Number of CV folds when use_cv=True
         """
         study = self.create_study()
 
@@ -133,6 +137,8 @@ class StudyManager:
             target_col=target_col,
             pipeline_kwargs=pipeline_kwargs,
             penalize_dominance=penalize_dominance,
+            use_cv=use_cv,
+            n_cv_folds=n_cv_folds,
         )
 
         print(f"Starting leak-free optimization: {self.study_name}")

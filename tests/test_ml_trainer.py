@@ -728,3 +728,223 @@ class TestTrainingIntegration:
         # With small synthetic data and log-transform, results can vary,
         # so allow 30% tolerance.
         assert lgb_metrics.mae < baseline_metrics.mae * 1.30
+
+
+# ============================================================================
+# Log-Transform Allowlist Tests (Phase 3)
+# ============================================================================
+
+
+class TestLogTransformAllowlist:
+    """Tests for _LOG_EXCLUDE_SUFFIXES allowlist that gates price feature log-transforms."""
+
+    @pytest.fixture
+    def sample_data(self):
+        """Minimal listing data for fast training."""
+        np.random.seed(42)
+        n = 200
+        artists = ["Artist A", "Artist B"]
+        return pd.DataFrame(
+            {
+                "artist_or_team": np.random.choice(artists, n),
+                "event_type": ["CONCERT"] * n,
+                "city": np.random.choice(["New York", "Los Angeles"], n),
+                "event_datetime": pd.date_range("2024-01-01", periods=n, freq="6h"),
+                "section": np.random.choice(["Floor", "Lower Level", "Upper Level"], n),
+                "row": np.random.choice(["1", "5", "10"], n),
+                "days_to_event": np.random.randint(1, 60, n),
+                "listing_price": 100 + np.random.randn(n) * 30,
+                "event_id": [f"e{i % 20}" for i in range(n)],
+                "timestamp": pd.date_range("2024-01-01", periods=n, freq="6h"),
+            }
+        )
+
+    def test_log_exclude_suffixes_contains_std(self):
+        """_LOG_EXCLUDE_SUFFIXES must exclude _std columns."""
+        from ticket_price_predictor.ml.training.trainer import _LOG_EXCLUDE_SUFFIXES
+
+        assert "_std" in _LOG_EXCLUDE_SUFFIXES
+
+    def test_log_exclude_suffixes_contains_cv_and_ratio(self):
+        """_LOG_EXCLUDE_SUFFIXES must exclude _cv and _ratio."""
+        from ticket_price_predictor.ml.training.trainer import _LOG_EXCLUDE_SUFFIXES
+
+        assert "_cv" in _LOG_EXCLUDE_SUFFIXES
+        assert "_ratio" in _LOG_EXCLUDE_SUFFIXES
+
+    def test_log_transformed_cols_populated_after_train(self, sample_data):
+        """After train(), _log_transformed_cols is a non-empty list."""
+        trainer = ModelTrainer(model_type="lightgbm", model_version="test")
+        trainer.train(
+            sample_data,
+            params={"boosting_type": "gbdt", "n_estimators": 50, "verbose": -1},
+        )
+        assert isinstance(trainer._log_transformed_cols, list)
+        # EventPricingFeatureExtractor generates price columns, so should be non-empty
+        assert len(trainer._log_transformed_cols) > 0
+
+    def test_log_transformed_cols_no_std_columns(self, sample_data):
+        """_log_transformed_cols must not include any _std suffix columns."""
+        trainer = ModelTrainer(model_type="lightgbm", model_version="test")
+        trainer.train(
+            sample_data,
+            params={"boosting_type": "gbdt", "n_estimators": 50, "verbose": -1},
+        )
+        for col in trainer._log_transformed_cols:
+            assert not col.lower().endswith("_std"), f"Unexpected _std column: {col}"
+
+    def test_log_transformed_cols_no_ratio_columns(self, sample_data):
+        """_log_transformed_cols must not include any _ratio suffix columns."""
+        trainer = ModelTrainer(model_type="lightgbm", model_version="test")
+        trainer.train(
+            sample_data,
+            params={"boosting_type": "gbdt", "n_estimators": 50, "verbose": -1},
+        )
+        for col in trainer._log_transformed_cols:
+            assert not col.lower().endswith("_ratio"), f"Unexpected _ratio column: {col}"
+
+
+# ============================================================================
+# Per-Quartile and Per-Zone MAE Tests (Phase 4)
+# ============================================================================
+
+
+class TestQuartileZoneMetrics:
+    """Tests for per-quartile and per-zone MAE in ModelEvaluator and TrainingMetrics."""
+
+    def test_compute_metrics_returns_quartile_mae(self):
+        """compute_metrics() returns a dict with Q1-Q4 keys."""
+        y_true = np.array([50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 350.0, 400.0])
+        y_pred = np.array([55.0, 105.0, 145.0, 205.0, 245.0, 305.0, 345.0, 405.0])
+
+        result = ModelEvaluator.compute_metrics(y_true, y_pred)
+
+        assert "quartile_mae" in result
+        qmae = result["quartile_mae"]
+        assert isinstance(qmae, dict)
+        assert set(qmae.keys()) == {"Q1", "Q2", "Q3", "Q4"}
+
+    def test_compute_metrics_quartile_mae_values_are_non_negative(self):
+        """Each quartile MAE value must be non-negative."""
+        np.random.seed(0)
+        y_true = np.linspace(10.0, 500.0, 100)
+        y_pred = y_true + np.random.randn(100) * 20.0
+
+        result = ModelEvaluator.compute_metrics(y_true, y_pred)
+        for q, val in result["quartile_mae"].items():
+            assert val >= 0, f"Quartile {q} MAE should be non-negative, got {val}"
+
+    def test_compute_metrics_returns_zone_mae_when_provided(self):
+        """compute_metrics() returns per-zone MAE when zones array is passed."""
+        y_true = np.array([100.0, 200.0, 100.0, 200.0, 300.0])
+        y_pred = np.array([110.0, 190.0, 105.0, 205.0, 295.0])
+        zones = np.array(["floor", "lower", "floor", "lower", "upper"])
+
+        result = ModelEvaluator.compute_metrics(y_true, y_pred, zones=zones)
+        zone_mae = result["zone_mae"]
+
+        assert isinstance(zone_mae, dict)
+        assert "floor" in zone_mae
+        assert "lower" in zone_mae
+        assert "upper" in zone_mae
+
+    def test_compute_metrics_zone_mae_empty_when_no_zones(self):
+        """compute_metrics() returns empty zone_mae when zones=None."""
+        y_true = np.array([100.0, 200.0])
+        y_pred = np.array([110.0, 190.0])
+
+        result = ModelEvaluator.compute_metrics(y_true, y_pred, zones=None)
+        assert result["zone_mae"] == {}
+
+    def test_training_metrics_quartile_zone_default_to_empty_dicts(self):
+        """TrainingMetrics.quartile_mae and zone_mae default to empty dicts."""
+        metrics = TrainingMetrics(
+            mae=10.0,
+            rmse=15.0,
+            mape=5.0,
+            r2=0.9,
+            n_train_samples=100,
+            n_val_samples=20,
+            n_test_samples=20,
+            n_features=5,
+            training_time_seconds=1.0,
+            model_version="v1",
+            model_type="lightgbm",
+        )
+        assert metrics.quartile_mae == {}
+        assert metrics.zone_mae == {}
+
+
+# ============================================================================
+# CV Objective Tests (Phase 5)
+# ============================================================================
+
+
+class TestCVObjective:
+    """Tests for create_raw_objective with use_cv=True/False."""
+
+    @pytest.fixture
+    def raw_split(self):
+        """Return a RawDataSplit from a small listing DataFrame."""
+        np.random.seed(42)
+        n = 200
+        df = pd.DataFrame(
+            {
+                "artist_or_team": np.random.choice(["Artist A", "Artist B"], n),
+                "event_type": ["CONCERT"] * n,
+                "city": np.random.choice(["New York", "Los Angeles"], n),
+                "event_datetime": pd.date_range("2024-01-01", periods=n, freq="6h"),
+                "section": np.random.choice(["Floor", "Lower Level", "Upper Level"], n),
+                "row": np.random.choice(["1", "5", "10"], n),
+                "days_to_event": np.random.randint(1, 60, n),
+                "listing_price": 100 + np.random.randn(n) * 30,
+                "event_id": [f"e{i % 20}" for i in range(n)],
+                "timestamp": pd.date_range("2024-01-01", periods=n, freq="6h"),
+            }
+        )
+        splitter = TimeBasedSplitter(
+            train_ratio=0.7,
+            val_ratio=0.15,
+            test_ratio=0.15,
+            stratify_col="artist_or_team",
+        )
+        return splitter.split_raw(df)
+
+    def test_create_raw_objective_single_split_runs(self, raw_split):
+        """create_raw_objective with use_cv=False completes one trial without error."""
+        import optuna
+
+        from ticket_price_predictor.ml.tuning.objective import create_raw_objective
+
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        objective = create_raw_objective(
+            raw_split=raw_split,
+            pipeline_kwargs={"include_listing": False, "include_popularity": False},
+            penalize_dominance=False,
+            use_cv=False,
+        )
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=1)
+
+        assert len(study.trials) == 1
+        assert study.trials[0].value is not None
+
+    def test_create_raw_objective_with_cv_runs(self, raw_split):
+        """create_raw_objective with use_cv=True completes one trial without error."""
+        import optuna
+
+        from ticket_price_predictor.ml.tuning.objective import create_raw_objective
+
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        objective = create_raw_objective(
+            raw_split=raw_split,
+            pipeline_kwargs={"include_listing": False, "include_popularity": False},
+            penalize_dominance=False,
+            use_cv=True,
+            n_cv_folds=2,
+        )
+        study = optuna.create_study(direction="minimize")
+        study.optimize(objective, n_trials=1)
+
+        assert len(study.trials) == 1
+        assert study.trials[0].value is not None

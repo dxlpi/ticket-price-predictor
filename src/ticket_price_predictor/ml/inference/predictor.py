@@ -1,9 +1,11 @@
 """Price prediction service."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from ticket_price_predictor.config import get_ml_config
@@ -27,6 +29,8 @@ class PricePredictor:
         model_version: str = "v1",
         cold_start_handler: ColdStartHandler | None = None,
         popularity_service: Any | None = None,
+        fitted_pipeline: FeaturePipeline | None = None,
+        log_transformed_cols: list[str] | None = None,
     ) -> None:
         """Initialize predictor.
 
@@ -35,18 +39,30 @@ class PricePredictor:
             model_version: Model version string
             cold_start_handler: Handler for new events/performers
             popularity_service: PopularityService instance for popularity features
+            fitted_pipeline: Loaded fitted FeaturePipeline from ModelTrainer.save().
+                When provided, predictions use the training-time statistics. When None,
+                an unfitted pipeline is created (backward-compatible, cold-start only).
+            log_transformed_cols: List of feature columns that were log-transformed
+                during training. Loaded from _meta.json by from_path(). When not None,
+                these transforms are replicated at inference and predictions are
+                inverse-transformed via np.expm1.
         """
         self._model = model
         self._model_version = model_version
         self._cold_start = cold_start_handler or ColdStartHandler()
-        self._feature_pipeline = FeaturePipeline(
-            include_momentum=False,
-            # Snapshot features require pre-joined _snap_* columns from ModelTrainer;
-            # at inference time no snapshot join occurs, so disable to avoid
-            # all predictions using training-mean defaults for these features.
-            include_snapshot=False,
-            popularity_service=popularity_service,
-        )
+        self._log_transformed_cols = log_transformed_cols  # None = old model, no meta file
+
+        if fitted_pipeline is not None:
+            self._feature_pipeline = fitted_pipeline
+        else:
+            self._feature_pipeline = FeaturePipeline(
+                include_momentum=False,
+                # Snapshot features require pre-joined _snap_* columns from ModelTrainer;
+                # at inference time no snapshot join occurs, so disable to avoid
+                # all predictions using training-mean defaults for these features.
+                include_snapshot=False,
+                popularity_service=popularity_service,
+            )
 
     @classmethod
     def from_path(
@@ -57,16 +73,45 @@ class PricePredictor:
     ) -> "PricePredictor":
         """Load predictor from saved model.
 
+        Automatically loads the fitted pipeline and log-transformed column list
+        when the companion files exist alongside the model file:
+          - {stem}_pipeline.joblib  → fitted FeaturePipeline with trained statistics
+          - {stem}_meta.json        → list of log-transformed feature column names
+
+        Falls back to unfitted pipeline when these files are absent (backward
+        compatible with models saved before this feature was added).
+
         Args:
-            model_path: Path to saved model
+            model_path: Path to saved model (e.g. data/models/lightgbm_v31.joblib)
             model_type: Type of model
             model_version: Version string
 
         Returns:
             PricePredictor instance
         """
+        model_path = Path(model_path)
         model = ModelTrainer.load(model_path, model_type)  # type: ignore
-        return cls(model, model_version)
+
+        stem = model_path.stem  # e.g. "lightgbm_v31"
+        pipeline_path = model_path.parent / f"{stem}_pipeline.joblib"
+        meta_path = model_path.parent / f"{stem}_meta.json"
+
+        fitted_pipeline = None
+        log_transformed_cols = None
+
+        if pipeline_path.exists():
+            fitted_pipeline = FeaturePipeline.load(pipeline_path)
+
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text())
+            log_transformed_cols = meta.get("log_transformed_cols")
+
+        return cls(
+            model,
+            model_version,
+            fitted_pipeline=fitted_pipeline,
+            log_transformed_cols=log_transformed_cols,
+        )
 
     def predict(
         self,
@@ -119,20 +164,36 @@ class PricePredictor:
         # Extract features
         X = self._feature_pipeline.transform(df)
 
+        # Replicate training-time log-transforms on price-level features.
+        # Only applied when _log_transformed_cols is set (model saved with meta file).
+        # When None (old model, no meta file), pass raw features to preserve
+        # backward-compatible behavior.
+        if self._log_transformed_cols is not None:
+            for col in self._log_transformed_cols:
+                if col in X.columns:
+                    X[col] = np.log1p(X[col].clip(lower=0))
+
         # Get seat zone from section
         from ticket_price_predictor.normalization.seat_zones import SeatZoneMapper
 
         mapper = SeatZoneMapper()
         seat_zone = mapper.normalize_zone_name(section)
 
-        # Make prediction
+        # Make prediction and inverse-transform from log-space when applicable
         if isinstance(self._model, QuantileLightGBMModel):
             median, lower, upper = self._model.predict_with_uncertainty(X)
+            if self._log_transformed_cols is not None:
+                median = np.clip(np.expm1(median), 0, None)
+                lower = np.clip(np.expm1(lower), 0, None)
+                upper = np.clip(np.expm1(upper), 0, None)
             predicted_price = float(median[0])
             price_lower = float(lower[0])
             price_upper = float(upper[0])
         else:
             preds = self._model.predict(X)
+            if self._log_transformed_cols is not None:
+                preds = np.expm1(preds)
+                preds = np.clip(preds, 0, None)
             predicted_price = float(preds[0])
             # Estimate bounds using config margin for non-quantile models
             price_lower = predicted_price * (1 - _config.price_bound_margin)

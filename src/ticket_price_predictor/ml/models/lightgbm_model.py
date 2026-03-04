@@ -56,8 +56,8 @@ class LightGBMModel(PriceModel):
         "early_stopping_rounds": 200,
     }
 
-    # A/B test variants for controlled DART vs GBDT comparison (Phase 1a).
-    # Use whichever produces lower test MAE. Both use Huber loss.
+    # GBDT + Huber loss: use via --loss huber CLI flag.
+    # DART + Huber causes catastrophic overfitting; never combine them.
     GBDT_PARAMS = {
         "objective": "huber",
         "alpha": 0.5,
@@ -74,26 +74,6 @@ class LightGBMModel(PriceModel):
         "verbose": -1,
         "n_estimators": 3000,
         "early_stopping_rounds": 100,
-    }
-
-    DART_PARAMS = {
-        "objective": "huber",
-        "alpha": 0.5,
-        "metric": ["mae", "rmse"],
-        "boosting_type": "dart",
-        "num_leaves": 63,
-        "learning_rate": 0.03,
-        "drop_rate": 0.1,
-        "skip_drop": 0.5,
-        "feature_fraction": 0.6,
-        "bagging_fraction": 0.7,
-        "bagging_freq": 5,
-        "min_child_samples": 20,
-        "reg_alpha": 0.3,
-        "reg_lambda": 0.3,
-        "verbose": -1,
-        "n_estimators": 2000,
-        "early_stopping_rounds": 200,
     }
 
     def __init__(

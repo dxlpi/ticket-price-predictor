@@ -66,6 +66,7 @@ Thumbs.db
 .omc/
 .claude/worktrees/
 .claude/settings.local.json
+SUMMARY.md
 
 # Coral (device-local files)
 .claude/coral/*

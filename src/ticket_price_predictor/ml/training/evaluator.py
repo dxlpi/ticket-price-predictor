@@ -18,15 +18,17 @@ class ModelEvaluator:
     def compute_metrics(
         y_true: npt.NDArray[Any],
         y_pred: npt.NDArray[Any],
-    ) -> dict[str, float]:
-        """Compute regression metrics.
+        zones: npt.NDArray[Any] | None = None,
+    ) -> dict[str, Any]:
+        """Compute regression metrics with optional per-quartile and per-zone breakdowns.
 
         Args:
-            y_true: True values
-            y_pred: Predicted values
+            y_true: True values (raw price scale)
+            y_pred: Predicted values (raw price scale)
+            zones: Optional array of zone labels (same length as y_true)
 
         Returns:
-            Dictionary of metrics
+            Dictionary of metrics including quartile_mae and zone_mae
         """
         # Ensure numpy arrays
         y_true = np.asarray(y_true)
@@ -44,11 +46,34 @@ class ModelEvaluator:
         else:
             mape = 0.0
 
+        # Per-quartile MAE
+        quartile_mae: dict[str, float] = {}
+        q25, q50, q75 = np.percentile(y_true, [25, 50, 75])
+        for label, qmask in [
+            ("Q1", y_true <= q25),
+            ("Q2", (y_true > q25) & (y_true <= q50)),
+            ("Q3", (y_true > q50) & (y_true <= q75)),
+            ("Q4", y_true > q75),
+        ]:
+            if qmask.any():
+                quartile_mae[label] = float(mean_absolute_error(y_true[qmask], y_pred[qmask]))
+
+        # Per-zone MAE
+        zone_mae: dict[str, float] = {}
+        if zones is not None:
+            zones_arr = np.asarray(zones)
+            for zone in np.unique(zones_arr):
+                zmask = zones_arr == zone
+                if zmask.any():
+                    zone_mae[str(zone)] = float(mean_absolute_error(y_true[zmask], y_pred[zmask]))
+
         return {
             "mae": float(mae),
             "rmse": float(rmse),
             "mape": float(mape),
             "r2": float(r2),
+            "quartile_mae": quartile_mae,
+            "zone_mae": zone_mae,
         }
 
     @staticmethod
@@ -86,6 +111,7 @@ class ModelEvaluator:
         training_time: float = 0.0,
         model_version: str = "v1",
         log_target: bool = False,
+        zones: npt.NDArray[Any] | None = None,
     ) -> TrainingMetrics:
         """Full model evaluation.
 
@@ -98,6 +124,7 @@ class ModelEvaluator:
             training_time: Training time in seconds
             model_version: Model version string
             log_target: If True, inverse-transform predictions from log-space
+            zones: Optional zone label array for per-zone MAE breakdown
 
         Returns:
             TrainingMetrics object
@@ -110,7 +137,7 @@ class ModelEvaluator:
             # Clip negative predictions (can occur from expm1 on small values)
             y_pred = np.clip(y_pred, 0, None)
 
-        metrics = ModelEvaluator.compute_metrics(y_test, y_pred)
+        metrics = ModelEvaluator.compute_metrics(y_test, y_pred, zones=zones)
 
         # Get feature importance
         importance = model.get_feature_importance()
@@ -135,6 +162,8 @@ class ModelEvaluator:
             training_time_seconds=training_time,
             best_iteration=best_iter,
             feature_importance=importance,
+            quartile_mae=metrics["quartile_mae"],
+            zone_mae=metrics["zone_mae"],
         )
 
     @staticmethod
@@ -162,6 +191,16 @@ class ModelEvaluator:
         if metrics.best_iteration:
             print(f"Best iteration: {metrics.best_iteration}")
         print()
+        if metrics.quartile_mae:
+            print("Per-quartile MAE:")
+            for q, mae_val in sorted(metrics.quartile_mae.items()):
+                print(f"  {q}: ${mae_val:.2f}")
+            print()
+        if metrics.zone_mae:
+            print("Per-zone MAE:")
+            for zone, mae_val in sorted(metrics.zone_mae.items()):
+                print(f"  {zone}: ${mae_val:.2f}")
+            print()
         if metrics.feature_importance:
             print("Top features:")
             for i, (name, imp) in enumerate(list(metrics.feature_importance.items())[:10]):

@@ -18,6 +18,12 @@ from ticket_price_predictor.ml.training.splitter import DataSplit, TimeBasedSpli
 
 ModelType = Literal["baseline", "lightgbm", "quantile"]
 
+# Suffixes that indicate scale-independent derived statistics.
+# Columns with these suffixes are excluded from log-transformation even when
+# their name contains "price", "avg", or "median", because log-transforming
+# std/cv/ratio/count values is statistically inappropriate.
+_LOG_EXCLUDE_SUFFIXES = ("_std", "_cv", "_ratio", "_count", "_change", "_rate")
+
 
 def _join_snapshot_features(
     listings_df: pd.DataFrame,
@@ -199,6 +205,7 @@ class ModelTrainer:
         self._model: PriceModel | None = None
         self._feature_pipeline: FeaturePipeline | None = None
         self._metrics: TrainingMetrics | None = None
+        self._log_transformed_cols: list[str] = []
 
     @property
     def model(self) -> PriceModel | None:
@@ -354,12 +361,16 @@ class ModelTrainer:
             X_val = X_val.drop(columns=zero_var_cols)
             X_test = X_test.drop(columns=zero_var_cols)
 
-        # Log-transform price-based features to align with log-transformed target
+        # Log-transform price-level features to align with log-transformed target.
+        # Exclude derived statistics (_std, _cv, _ratio, etc.) — these are already
+        # scale-independent and log-transforming them is statistically inappropriate.
         price_cols = [
             c
             for c in X_train.columns
-            if "price" in c.lower() or "avg" in c.lower() or "median" in c.lower()
+            if ("price" in c.lower() or "avg" in c.lower() or "median" in c.lower())
+            and not any(c.lower().endswith(suffix) for suffix in _LOG_EXCLUDE_SUFFIXES)
         ]
+        self._log_transformed_cols = price_cols
         if price_cols:
             print(f"Log-transforming {len(price_cols)} price features")
             for c in price_cols:
@@ -435,6 +446,18 @@ class ModelTrainer:
                     "Early stopping fired at round 0 — check learning_rate and early_stopping_rounds."
                 )
 
+        # Derive zone labels for per-zone evaluation breakdown
+        test_zones = None
+        if "section" in test_df.columns:
+            from ticket_price_predictor.normalization.seat_zones import SeatZoneMapper
+
+            _zone_mapper = SeatZoneMapper()
+            test_zones = (
+                test_df["section"]
+                .apply(lambda s: _zone_mapper.normalize_zone_name(str(s)).value)
+                .values
+            )
+
         # Evaluate: inverse-transform predictions back to raw price scale
         print("Evaluating model...")
         self._metrics = ModelEvaluator.evaluate_model(
@@ -446,6 +469,7 @@ class ModelTrainer:
             training_time=training_time,
             model_version=self._model_version,
             log_target=True,
+            zones=test_zones,
         )
 
         ModelEvaluator.print_metrics(self._metrics)
@@ -668,6 +692,18 @@ class ModelTrainer:
         model_path = output_dir / f"{self._model_type}_{self._model_version}.joblib"
         self._model.save(model_path)
         print(f"Model saved to: {model_path}")
+
+        # Save fitted feature pipeline (enables inference with trained statistics)
+        if self._feature_pipeline is not None:
+            pipeline_path = output_dir / f"{self._model_type}_{self._model_version}_pipeline.joblib"
+            self._feature_pipeline.save(pipeline_path)
+            print(f"Pipeline saved to: {pipeline_path}")
+
+        # Save log-transformed column list (needed to replicate transforms at inference)
+        if self._log_transformed_cols:
+            meta_path = output_dir / f"{self._model_type}_{self._model_version}_meta.json"
+            meta_path.write_text(json.dumps({"log_transformed_cols": self._log_transformed_cols}))
+            print(f"Meta saved to: {meta_path}")
 
         # Save metrics
         if self._metrics:

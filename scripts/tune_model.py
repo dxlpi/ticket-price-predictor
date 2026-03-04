@@ -71,6 +71,17 @@ def main() -> None:
         action="store_true",
         help="Use legacy pre-extracted feature path (has data leakage risk)",
     )
+    parser.add_argument(
+        "--cv-tuning",
+        action="store_true",
+        help="Use TemporalGroupCV within each trial for more stable hyperparameter selection",
+    )
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=3,
+        help="Number of CV folds when --cv-tuning is active (default: 3)",
+    )
 
     # Data configuration
     parser.add_argument(
@@ -97,6 +108,8 @@ def main() -> None:
     print(f"Mode: {'legacy (pre-extracted)' if args.legacy else 'leak-free (re-extract per trial)'}")
     if args.legacy:
         print(f"Search space: {args.search_space}")
+    if not args.legacy and args.cv_tuning:
+        print(f"CV tuning: enabled ({args.cv_folds} folds per trial)")
     print(f"Trials: {args.n_trials}")
     print(f"Parallel jobs: {args.n_jobs}")
     print(f"Feature dominance penalty: {not args.no_penalty}")
@@ -177,6 +190,8 @@ def main() -> None:
             penalize_dominance=not args.no_penalty,
             n_jobs=args.n_jobs,
             pipeline_kwargs={"include_listing": False},
+            use_cv=args.cv_tuning,
+            n_cv_folds=args.cv_folds,
         )
 
     # Save trial metadata for all trials

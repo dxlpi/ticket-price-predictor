@@ -1,6 +1,7 @@
 """Feature pipeline orchestration."""
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -206,6 +207,39 @@ class FeaturePipeline:
         """
         self.fit(df)
         return self.transform(df)
+
+    def save(self, path: Path) -> None:
+        """Serialize fitted pipeline to disk using joblib.
+
+        PopularityFeatureExtractor handles unpicklable state via __getstate__,
+        so the live pipeline remains unaffected after save.
+
+        Args:
+            path: Destination file path (e.g. lightgbm_v31_pipeline.joblib)
+        """
+        import joblib
+
+        joblib.dump(self, path)
+
+    @classmethod
+    def load(cls, path: Path) -> "FeaturePipeline":
+        """Load a fitted pipeline from disk.
+
+        Args:
+            path: Path to saved pipeline file
+
+        Returns:
+            Loaded FeaturePipeline with _fitted=True
+
+        Raises:
+            TypeError: If the file does not contain a FeaturePipeline
+        """
+        import joblib
+
+        pipeline = joblib.load(path)
+        if not isinstance(pipeline, cls):
+            raise TypeError(f"Expected FeaturePipeline, got {type(pipeline)}")
+        return pipeline
 
     def get_params(self) -> dict[str, Any]:
         """Get parameters for all extractors."""

@@ -8,7 +8,8 @@ import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from ticket_price_predictor.ml.models.lightgbm_model import LightGBMModel
-from ticket_price_predictor.ml.training.splitter import DataSplit, RawDataSplit
+from ticket_price_predictor.ml.training.splitter import DataSplit, RawDataSplit, TemporalGroupCV
+from ticket_price_predictor.ml.training.trainer import _LOG_EXCLUDE_SUFFIXES
 
 
 def create_objective(
@@ -210,6 +211,8 @@ def create_raw_objective(
     target_col: str = "listing_price",
     pipeline_kwargs: dict[str, Any] | None = None,
     penalize_dominance: bool = True,
+    use_cv: bool = False,
+    n_cv_folds: int = 3,
 ) -> Any:
     """Factory to create leak-free objective with dollar-space evaluation.
 
@@ -225,6 +228,10 @@ def create_raw_objective(
         target_col: Target column name
         pipeline_kwargs: Base kwargs for FeaturePipeline (e.g. include_listing=False)
         penalize_dominance: Add penalty for high feature dominance
+        use_cv: When True, use TemporalGroupCV on raw_split.train_df for more stable
+            hyperparameter selection. Each fold evaluates on fold.val_df (matching the
+            single-split pattern). Falls back to single-split when <2 folds produced.
+        n_cv_folds: Number of CV folds when use_cv=True (default 3)
 
     Returns:
         Objective function for Optuna
@@ -234,6 +241,56 @@ def create_raw_objective(
     base_kwargs: dict[str, Any] = {"include_momentum": False}
     if pipeline_kwargs:
         base_kwargs.update(pipeline_kwargs)
+
+    def _evaluate_single_split(
+        params: dict[str, Any],
+        extractor_params: dict[str, dict[str, Any]],
+        train_df: pd.DataFrame,
+        val_df: pd.DataFrame,
+    ) -> tuple[float, float, float, float, int, float, str]:
+        """Extract features, train, and evaluate on one split. Returns (mae, r2, rmse, train_mae, n_features, max_importance, top_feature)."""
+        kwargs = {**base_kwargs, "extractor_params": extractor_params}
+        pipeline = FeaturePipeline(**kwargs)
+        pipeline.fit(train_df)
+
+        X_train = pipeline.transform(train_df).copy()
+        X_val = pipeline.transform(val_df).copy()
+
+        zero_var_cols = [c for c in X_train.columns if X_train[c].nunique() <= 1]
+        if zero_var_cols:
+            X_train = X_train.drop(columns=zero_var_cols)
+            X_val = X_val.drop(columns=zero_var_cols)
+
+        price_cols = [
+            c
+            for c in X_train.columns
+            if ("price" in c.lower() or "avg" in c.lower() or "median" in c.lower())
+            and not any(c.lower().endswith(suffix) for suffix in _LOG_EXCLUDE_SUFFIXES)
+        ]
+        for c in price_cols:
+            X_train[c] = np.log1p(X_train[c].clip(lower=0))
+            X_val[c] = np.log1p(X_val[c].clip(lower=0))
+
+        y_train = pd.Series(np.log1p(train_df[target_col].values), name=target_col)
+        y_val_raw = val_df[target_col].values
+        y_val_log = pd.Series(np.log1p(y_val_raw), name=target_col)
+
+        model = LightGBMModel(params=params)
+        model.fit(X_train, y_train, X_val, y_val_log)
+
+        val_preds_dollars = np.expm1(model.predict(X_val))
+        val_mae = float(mean_absolute_error(y_val_raw, val_preds_dollars))
+        val_r2 = float(r2_score(y_val_raw, val_preds_dollars))
+        val_rmse = float(np.sqrt(mean_squared_error(y_val_raw, val_preds_dollars)))
+
+        y_train_raw = train_df[target_col].values
+        train_mae = float(mean_absolute_error(y_train_raw, np.expm1(model.predict(X_train))))
+
+        importance = model.get_feature_importance()
+        max_importance = max(importance.values()) if importance else 0.0
+        top_feature = list(importance.keys())[0] if importance else ""
+
+        return val_mae, val_r2, val_rmse, train_mae, X_train.shape[1], max_importance, top_feature
 
     def objective(trial: optuna.Trial) -> float:
         """Objective: minimize dollar-space validation MAE."""
@@ -259,68 +316,58 @@ def create_raw_objective(
         }
 
         try:
-            # Re-extract features with trial-specific smoothing
-            kwargs = {**base_kwargs, "extractor_params": extractor_params}
-            pipeline = FeaturePipeline(**kwargs)
-            pipeline.fit(raw_split.train_df)
+            if use_cv:
+                cv = TemporalGroupCV(n_folds=n_cv_folds)
+                folds = cv.split(raw_split.train_df)
 
-            X_train = pipeline.transform(raw_split.train_df).copy()
-            X_val = pipeline.transform(raw_split.val_df).copy()
+                if len(folds) < 2:
+                    # Not enough data for CV; fall through to single-split
+                    fold_maes = None
+                else:
+                    fold_results = []
+                    for fold in folds:
+                        result = _evaluate_single_split(
+                            params, extractor_params, fold.train_df, fold.val_df
+                        )
+                        fold_results.append(result)
 
-            # Remove zero-variance features
-            zero_var_cols = [c for c in X_train.columns if X_train[c].nunique() <= 1]
-            if zero_var_cols:
-                X_train = X_train.drop(columns=zero_var_cols)
-                X_val = X_val.drop(columns=zero_var_cols)
+                    fold_maes_list = [r[0] for r in fold_results]
+                    val_mae = float(np.mean(fold_maes_list))
+                    val_r2 = float(np.mean([r[1] for r in fold_results]))
+                    val_rmse = float(np.mean([r[2] for r in fold_results]))
+                    train_mae = float(np.mean([r[3] for r in fold_results]))
+                    n_features = fold_results[-1][4]
+                    max_importance = float(np.mean([r[5] for r in fold_results]))
+                    top_feature = fold_results[-1][6]
+                    fold_maes = fold_maes_list
 
-            # Log-transform price-based features
-            price_cols = [
-                c
-                for c in X_train.columns
-                if "price" in c.lower() or "avg" in c.lower() or "median" in c.lower()
-            ]
-            for c in price_cols:
-                X_train[c] = np.log1p(X_train[c].clip(lower=0))
-                X_val[c] = np.log1p(X_val[c].clip(lower=0))
-
-            # Log-transform targets
-            y_train = pd.Series(np.log1p(raw_split.train_df[target_col].values), name=target_col)
-            y_val_raw = raw_split.val_df[target_col].values
-            y_val_log = pd.Series(np.log1p(y_val_raw), name=target_col)
-
-            # Train model
-            model = LightGBMModel(params=params)
-            model.fit(X_train, y_train, X_val, y_val_log)
-
-            # Evaluate in DOLLAR-SPACE (not log-space)
-            val_preds_log = model.predict(X_val)
-            val_preds_dollars = np.expm1(val_preds_log)
-            val_mae = float(mean_absolute_error(y_val_raw, val_preds_dollars))
-
-            # Secondary metrics in dollar-space
-            val_r2 = float(r2_score(y_val_raw, val_preds_dollars))
-            val_rmse = float(np.sqrt(mean_squared_error(y_val_raw, val_preds_dollars)))
-
-            # Train metrics for overfitting check
-            train_preds_log = model.predict(X_train)
-            train_preds_dollars = np.expm1(train_preds_log)
-            y_train_raw = raw_split.train_df[target_col].values
-            train_mae = float(mean_absolute_error(y_train_raw, train_preds_dollars))
-
-            # Feature importance
-            importance = model.get_feature_importance()
-            max_importance = max(importance.values()) if importance else 0.0
-            top_feature = list(importance.keys())[0] if importance else ""
+                if fold_maes is None:
+                    (
+                        val_mae,
+                        val_r2,
+                        val_rmse,
+                        train_mae,
+                        n_features,
+                        max_importance,
+                        top_feature,
+                    ) = _evaluate_single_split(
+                        params, extractor_params, raw_split.train_df, raw_split.val_df
+                    )
+            else:
+                val_mae, val_r2, val_rmse, train_mae, n_features, max_importance, top_feature = (
+                    _evaluate_single_split(
+                        params, extractor_params, raw_split.train_df, raw_split.val_df
+                    )
+                )
 
             # Store as user attributes
             trial.set_user_attr("val_mae_dollars", val_mae)
             trial.set_user_attr("val_r2", val_r2)
             trial.set_user_attr("val_rmse", val_rmse)
             trial.set_user_attr("train_mae", train_mae)
-            trial.set_user_attr("best_iteration", model.best_iteration)
             trial.set_user_attr("max_feature_importance", max_importance)
             trial.set_user_attr("top_feature", top_feature)
-            trial.set_user_attr("n_features", X_train.shape[1])
+            trial.set_user_attr("n_features", n_features)
 
             # Objective value
             objective_value = val_mae

@@ -99,3 +99,9 @@ class TrainingMetrics(BaseModel):
     feature_importance: dict[str, float] = Field(
         default_factory=dict, description="Feature importance scores"
     )
+
+    # Per-quartile and per-zone MAE breakdowns (optional — absent in old metrics files)
+    quartile_mae: dict[str, float] = Field(
+        default_factory=dict, description="MAE per price quartile (Q1-Q4)"
+    )
+    zone_mae: dict[str, float] = Field(default_factory=dict, description="MAE per seat zone")
