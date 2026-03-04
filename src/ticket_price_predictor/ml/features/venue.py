@@ -28,7 +28,7 @@ class VenueStatsCache:
     global mean, preventing noisy estimates.
     """
 
-    SMOOTHING_FACTOR = 200
+    SMOOTHING_FACTOR = 75
 
     def __init__(self) -> None:
         """Initialize empty cache."""
@@ -70,12 +70,13 @@ class VenueStatsCache:
 
             smoothed_avg = (n * group_mean + m * self._global_avg) / (n + m)
             smoothed_median = (n * group_median + m * self._global_median) / (n + m)
+            smoothed_std = (n * group_std + m * self._global_std) / (n + m)
 
             self._stats[venue_key] = VenueStats(
                 venue_name=str(venue),
                 avg_price=smoothed_avg,
                 median_price=smoothed_median,
-                price_std=group_std,
+                price_std=smoothed_std,
                 listing_count=n,
             )
 
@@ -118,6 +119,7 @@ class VenueFeatureExtractor(FeatureExtractor):
         return [
             "venue_avg_price",
             "venue_median_price",
+            "venue_price_std",
             "is_known_venue",
         ]
 
@@ -149,6 +151,7 @@ class VenueFeatureExtractor(FeatureExtractor):
         stats_list = df["venue_name"].apply(self._cache.get_stats)
         result["venue_avg_price"] = stats_list.apply(lambda s: s.avg_price)
         result["venue_median_price"] = stats_list.apply(lambda s: s.median_price)
+        result["venue_price_std"] = stats_list.apply(lambda s: s.price_std)
         result["is_known_venue"] = df["venue_name"].apply(
             lambda v: 1.0 if self._cache.is_known_venue(v) else 0.0
         )

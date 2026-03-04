@@ -231,7 +231,7 @@ def create_raw_objective(
     """
     from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
 
-    base_kwargs: dict[str, Any] = {"include_momentum": True}
+    base_kwargs: dict[str, Any] = {"include_momentum": False}
     if pipeline_kwargs:
         base_kwargs.update(pipeline_kwargs)
 

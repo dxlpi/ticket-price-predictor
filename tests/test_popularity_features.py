@@ -65,13 +65,14 @@ class TestPopularityFeatureExtractor:
     def test_feature_names(self):
         """Test feature names are correct."""
         extractor = PopularityFeatureExtractor()
-        assert len(extractor.feature_names) == 6
+        assert len(extractor.feature_names) == 7
         assert "popularity_score" in extractor.feature_names
         assert "popularity_tier_encoded" in extractor.feature_names
         assert "youtube_subscribers_log" in extractor.feature_names
         assert "youtube_views_log" in extractor.feature_names
         assert "lastfm_listeners_log" in extractor.feature_names
         assert "lastfm_play_count_log" in extractor.feature_names
+        assert "popularity_data_available" in extractor.feature_names
 
     def test_graceful_degradation_no_service(self):
         """Test that extractor works without a popularity service."""
@@ -88,7 +89,7 @@ class TestPopularityFeatureExtractor:
         result = extractor.extract(df)
 
         assert len(result) == 2
-        assert len(result.columns) == 6
+        assert len(result.columns) == 7
         # All features should be 0 when no service
         assert result["popularity_score"].sum() == 0.0
         assert result["popularity_tier_encoded"].sum() == 0

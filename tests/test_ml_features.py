@@ -1,5 +1,6 @@
 """Tests for ML feature extractors."""
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -250,6 +251,69 @@ class TestEventFeatureExtractor:
         result = extractor.extract(df)
         assert len(result) == 3
         assert "event_type_encoded" in result.columns
+        assert "market_saturation" in result.columns
+
+    def test_market_saturation_feature(self):
+        """Test market saturation counts concurrent city events."""
+        extractor = EventFeatureExtractor()
+        # Two events in NYC same week, one in Chicago
+        train_df = pd.DataFrame(
+            {
+                "event_id": ["e1", "e2", "e3"],
+                "city": ["New York", "New York", "Chicago"],
+                "event_datetime": pd.to_datetime(["2024-07-10", "2024-07-12", "2024-07-11"]),
+            }
+        )
+        extractor.fit(train_df)
+
+        # NYC same week should have 2 events
+        nyc_row = pd.DataFrame(
+            {
+                "event_id": ["e1"],
+                "city": ["New York"],
+                "event_datetime": pd.to_datetime(["2024-07-10"]),
+                "event_type": ["CONCERT"],
+            }
+        )
+        result = extractor.extract(nyc_row)
+        assert result["market_saturation"].iloc[0] == pytest.approx(np.log1p(2))
+
+        # Chicago same week has 1 event
+        chi_row = pd.DataFrame(
+            {
+                "event_id": ["e3"],
+                "city": ["Chicago"],
+                "event_datetime": pd.to_datetime(["2024-07-11"]),
+                "event_type": ["CONCERT"],
+            }
+        )
+        result_chi = extractor.extract(chi_row)
+        assert result_chi["market_saturation"].iloc[0] == pytest.approx(np.log1p(1))
+
+    def test_market_saturation_different_years_same_week(self):
+        """Year must be part of key to prevent cross-year collisions."""
+        extractor = EventFeatureExtractor()
+        train_df = pd.DataFrame(
+            {
+                "event_id": ["e1"],
+                "city": ["New York"],
+                "event_datetime": pd.to_datetime(["2023-07-10"]),
+            }
+        )
+        extractor.fit(train_df)
+
+        # 2024 same ISO week as 2023 event — should NOT inherit 2023 count
+        test_df = pd.DataFrame(
+            {
+                "event_id": ["e2"],
+                "city": ["New York"],
+                "event_datetime": pd.to_datetime(["2024-07-10"]),
+                "event_type": ["CONCERT"],
+            }
+        )
+        result = extractor.extract(test_df)
+        # 2024 week has no events in training (training only has 2023)
+        assert result["market_saturation"].iloc[0] == pytest.approx(np.log1p(0))
 
 
 # ============================================================================
@@ -307,6 +371,36 @@ class TestSeatingFeatureExtractor:
         assert result["is_floor"].iloc[0] == 1
         assert result["is_ga"].iloc[1] == 1
         assert result["is_floor"].iloc[2] == 0
+
+    def test_is_premium_detection(self):
+        """Test premium section keyword detection."""
+        extractor = SeatingFeatureExtractor()
+        df = pd.DataFrame(
+            {
+                "section": [
+                    "VIP BOX 1",  # → 1 (vip)
+                    "PLATINUM SEATS",  # → 1 (platinum)
+                    "Floor GA",  # → 0 (no premium keyword)
+                    "General Admission",  # → 0 (excluded)
+                    "PIT STANDING",  # → 1 (pit)
+                    "Section 415 Row 22",  # → 0 (no keyword)
+                    "Club Level 205",  # → 0 (no premium keyword)
+                    "SUITE 12",  # → 1 (suite)
+                    "FIELD A",  # → 1 (field)
+                    "Courtside Row 1",  # → 1 (courtside)
+                ],
+            }
+        )
+
+        result = extractor.extract(df)
+        expected = [1, 1, 0, 0, 1, 0, 0, 1, 1, 1]
+        assert result["is_premium"].tolist() == expected
+
+    def test_is_premium_in_feature_names(self):
+        """Test that is_premium is in feature names."""
+        extractor = SeatingFeatureExtractor()
+        assert "is_premium" in extractor.feature_names
+        assert len(extractor.feature_names) == 6
 
 
 # ============================================================================
@@ -511,27 +605,35 @@ class TestFeaturePipeline:
 
     def test_feature_count(self):
         """Test expected feature count."""
-        pipeline_no_momentum = FeaturePipeline(include_momentum=False)
-        pipeline_with_momentum = FeaturePipeline(include_momentum=True)
+        # No snapshot, no momentum
+        pipeline_no_extras = FeaturePipeline(include_momentum=False, include_snapshot=False)
+        # Default: snapshot=True, momentum=False
+        pipeline_with_snapshot = FeaturePipeline(include_momentum=False, include_snapshot=True)
+        # Momentum (no snapshot)
+        pipeline_with_momentum = FeaturePipeline(include_momentum=True, include_snapshot=False)
 
-        # Without momentum: performer(8) + event(8) + seating(6) + timeseries(6)
-        #   + regional(7) + popularity(6) + listing(4) + venue(3) + event_pricing(5)
-        #   + interactions(6) = 59
-        assert len(pipeline_no_momentum.feature_names) == 59
+        # No extras: performer(8) + event(9) + seating(6) + timeseries(6)
+        #   + regional(7) + popularity(7) + listing(4) + venue(4) + event_pricing(5)
+        #   + interactions(7) = 63
+        assert len(pipeline_no_extras.feature_names) == 63
 
-        # With momentum: 59 + 4 momentum features = 63
-        assert len(pipeline_with_momentum.feature_names) == 63
+        # With snapshot (default): 63 + 4 snapshot = 67
+        assert len(pipeline_with_snapshot.feature_names) == 67
+
+        # With momentum (no snapshot): 63 + 4 momentum = 67
+        assert len(pipeline_with_momentum.feature_names) == 67
 
     def test_feature_count_without_new_extractors(self):
-        """Test feature count when new extractors are disabled."""
+        """Test feature count when optional extractors are disabled."""
         pipeline = FeaturePipeline(
             include_momentum=False,
+            include_snapshot=False,
             include_popularity=False,
             include_regional=False,
         )
-        # performer(8) + event(8) + seating(6) + timeseries(6) + listing(4) + venue(3)
-        #   + event_pricing(5) + interactions(6) = 46
-        assert len(pipeline.feature_names) == 46
+        # performer(8) + event(9) + seating(6) + timeseries(6) + listing(4) + venue(4)
+        #   + event_pricing(5) + interactions(7) = 49
+        assert len(pipeline.feature_names) == 49
 
 
 class TestEventPricingLOO:

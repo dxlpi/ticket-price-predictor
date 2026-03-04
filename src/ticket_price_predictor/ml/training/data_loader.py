@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from ticket_price_predictor.schemas.listings import TicketListing
-from ticket_price_predictor.storage import ListingRepository
+from ticket_price_predictor.storage import ListingRepository, SnapshotRepository
 
 
 class DataLoader:
@@ -19,6 +19,7 @@ class DataLoader:
         """
         self._data_dir = Path(data_dir)
         self._listing_repo = ListingRepository(self._data_dir)
+        self._snapshot_repo = SnapshotRepository(self._data_dir)
 
     def load_listings(
         self,
@@ -93,6 +94,38 @@ class DataLoader:
         if "event_datetime" in df.columns:
             df["event_datetime"] = pd.to_datetime(df["event_datetime"])
 
+        return df
+
+    def load_snapshots(self) -> pd.DataFrame:
+        """Load all price snapshots as a DataFrame.
+
+        Returns raw snapshot data — no joining or aggregation. The
+        snapshot-to-listing join happens in the trainer after splitting
+        to preserve the split-before-fit invariant.
+
+        Returns:
+            DataFrame with columns: event_id, seat_zone, timestamp,
+            price_min, price_avg, price_max, inventory_remaining, days_to_event
+        """
+        snapshots = self._snapshot_repo.get_snapshots()
+        if not snapshots:
+            return pd.DataFrame()
+
+        records = [
+            {
+                "event_id": s.event_id,
+                "seat_zone": s.seat_zone.value,
+                "timestamp": s.timestamp,
+                "price_min": s.price_min,
+                "price_avg": s.price_avg,
+                "price_max": s.price_max,
+                "inventory_remaining": s.inventory_remaining,
+                "days_to_event": s.days_to_event,
+            }
+            for s in snapshots
+        ]
+        df = pd.DataFrame(records)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
         return df
 
     def get_summary(self) -> dict[str, int | float]:

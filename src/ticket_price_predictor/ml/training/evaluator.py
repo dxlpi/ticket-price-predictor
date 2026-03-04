@@ -1,6 +1,6 @@
 """Model evaluation utilities."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
@@ -123,7 +123,7 @@ class ModelEvaluator:
         return TrainingMetrics(
             model_version=model_version,
             model_type=model.name,
-            trained_at=datetime.utcnow(),
+            trained_at=datetime.now(UTC),
             n_train_samples=n_train,
             n_val_samples=n_val,
             n_test_samples=len(y_test),

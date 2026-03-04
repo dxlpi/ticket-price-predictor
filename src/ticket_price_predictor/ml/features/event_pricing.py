@@ -27,7 +27,8 @@ class EventPricingFeatureExtractor(FeatureExtractor):
 
     SMOOTHING_FACTOR = 20  # Bayesian smoothing for small-sample events
 
-    def __init__(self) -> None:
+    def __init__(self, include_section_feature: bool = False) -> None:
+        self._include_section_feature = include_section_feature
         self._event_stats: dict[
             str, dict[str, float]
         ] = {}  # event_id -> {median, mean, std, count}
@@ -54,13 +55,16 @@ class EventPricingFeatureExtractor(FeatureExtractor):
     @property
     def feature_names(self) -> list[str]:
         """Return list of feature names this extractor produces."""
-        return [
+        names = [
             "event_median_price",
             "event_zone_median_price",
             "event_listing_count",
             "event_price_cv",
             "event_zone_price_ratio",
         ]
+        if self._include_section_feature:
+            names.append("event_section_median_price")
+        return names
 
     def fit(self, df: pd.DataFrame) -> "EventPricingFeatureExtractor":
         """Fit on training data to compute event and zone price statistics.
@@ -120,7 +124,9 @@ class EventPricingFeatureExtractor(FeatureExtractor):
             group_std = float(grp_prices.std()) if n > 1 else 0.0
             smoothed_median = (n * group_median + m * global_median) / (n + m)
             event_id_str = str(event_id)
-            self._train_event_prices[event_id_str] = set(grp_prices.tolist())
+            self._train_event_prices[event_id_str] = {
+                int(round(p * 100)) for p in grp_prices.tolist()
+            }
             self._event_stats[event_id_str] = {
                 "median": smoothed_median,
                 "mean": group_mean,
@@ -239,6 +245,7 @@ class EventPricingFeatureExtractor(FeatureExtractor):
         event_listing_counts = []
         event_price_cvs = []
         event_zone_price_ratios = []
+        event_section_median_prices: list[float] = []
 
         for _, row in df.iterrows():
             event_id = str(row.get("event_id", "")) if row.get("event_id") is not None else ""
@@ -275,7 +282,7 @@ class EventPricingFeatureExtractor(FeatureExtractor):
             if (
                 event_id in self._event_price_sums
                 and not pd.isna(price)
-                and float(price) in self._train_event_prices.get(event_id, set())
+                and int(round(float(price) * 100)) in self._train_event_prices.get(event_id, set())
             ):
                 total = self._event_price_sums[event_id]
                 n_loo = self._event_price_counts[event_id]
@@ -306,6 +313,13 @@ class EventPricingFeatureExtractor(FeatureExtractor):
             # Zone price ratio: zone_median / event_median, clamped to [0.1, 10.0]
             zone_ratio = float(np.clip(ez_median / ev_median, 0.1, 10.0)) if ev_median > 0 else 1.0
 
+            # Section-level median with fallback to zone median
+            if self._include_section_feature:
+                section = str(row.get("section", "")) if row.get("section") is not None else ""
+                section_stats = self._event_section_stats.get((event_id, section))
+                es_median = section_stats["median"] if section_stats is not None else ez_median
+                event_section_median_prices.append(es_median)
+
             event_median_prices.append(ev_median)
             event_zone_median_prices.append(ez_median)
             event_listing_counts.append(float(np.log1p(ev_count)))
@@ -317,6 +331,8 @@ class EventPricingFeatureExtractor(FeatureExtractor):
         result["event_listing_count"] = event_listing_counts
         result["event_price_cv"] = event_price_cvs
         result["event_zone_price_ratio"] = event_zone_price_ratios
+        if self._include_section_feature:
+            result["event_section_median_price"] = event_section_median_prices
 
         return result
 

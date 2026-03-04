@@ -83,21 +83,24 @@ class TestVenueStatsCache:
 
     def test_smoothing_factor_is_high(self):
         # Ensure smoothing factor is aggressive enough to prevent overfitting
-        assert VenueStatsCache.SMOOTHING_FACTOR >= 150
+        assert VenueStatsCache.SMOOTHING_FACTOR >= 50
 
 
 class TestVenueFeatureExtractor:
     def test_feature_names(self):
         extractor = VenueFeatureExtractor()
-        assert len(extractor.feature_names) == 3
+        assert len(extractor.feature_names) == 4
         assert "venue_avg_price" in extractor.feature_names
         assert "venue_median_price" in extractor.feature_names
+        assert "venue_price_std" in extractor.feature_names
         assert "is_known_venue" in extractor.feature_names
 
     def test_no_noisy_features(self):
         extractor = VenueFeatureExtractor()
-        assert "venue_price_std" not in extractor.feature_names
+        # venue_listing_count is noisy (raw count) and excluded
         assert "venue_listing_count" not in extractor.feature_names
+        # venue_price_std is Bayesian-smoothed and intentionally included
+        assert "venue_price_std" in extractor.feature_names
 
     def test_extract_returns_all_feature_columns(self, sample_df):
         extractor = VenueFeatureExtractor()

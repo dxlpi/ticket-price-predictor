@@ -30,13 +30,14 @@ def base_features_df():
 
 class TestInteractionFeatureExtractor:
     def test_feature_names(self, extractor):
-        assert len(extractor.feature_names) == 6
+        assert len(extractor.feature_names) == 7
         assert "artist_zone_price" in extractor.feature_names
         assert "days_to_event_log" in extractor.feature_names
         assert "popularity_zone" in extractor.feature_names
         assert "urgency_zone" in extractor.feature_names
         assert "artist_city_tier" in extractor.feature_names
         assert "price_per_urgency" in extractor.feature_names
+        assert "artist_venue_price" in extractor.feature_names
 
     def test_extract_returns_all_columns(self, extractor, base_features_df):
         result = extractor.extract(base_features_df)
@@ -119,3 +120,34 @@ class TestInteractionFeatureExtractor:
         result = extractor.extract(base_features_df)
         # Row 2 has is_known_artist=0 but should still have nonzero artist_city_tier
         assert result["artist_city_tier"].iloc[2] != 0.0
+
+    def test_artist_venue_price_with_venue_median(self):
+        """artist_venue_price = artist_avg * venue_median / global_median."""
+        extractor = InteractionFeatureExtractor()
+        train_df = pd.DataFrame(
+            {
+                "artist_avg_price": [100.0, 200.0],
+                "venue_median_price": [150.0, 300.0],
+            }
+        )
+        extractor.fit(train_df)
+        assert extractor._global_median == pytest.approx(225.0)  # median of [150, 300]
+
+        result = extractor.extract(train_df)
+        expected_0 = 100.0 * 150.0 / 225.0
+        expected_1 = 200.0 * 300.0 / 225.0
+        assert result["artist_venue_price"].iloc[0] == pytest.approx(expected_0)
+        assert result["artist_venue_price"].iloc[1] == pytest.approx(expected_1)
+
+    def test_artist_venue_price_defaults_to_zero_when_venue_missing(self, extractor):
+        """When venue_median_price is absent, artist_venue_price = 0."""
+        df = pd.DataFrame({"artist_avg_price": [100.0, 200.0]})
+        result = extractor.extract(df)
+        # venue_median_price missing → defaults to 0.0 → product is 0
+        assert (result["artist_venue_price"] == 0.0).all()
+
+    def test_fit_uses_defensive_default_when_venue_absent(self):
+        """fit() with no venue_median_price keeps 150.0 defensive default."""
+        extractor = InteractionFeatureExtractor()
+        extractor.fit(pd.DataFrame({"other_col": [1, 2, 3]}))
+        assert extractor._global_median == pytest.approx(150.0)

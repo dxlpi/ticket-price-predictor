@@ -4,30 +4,39 @@
 
 set -e
 
-if [ -z "$1" ]; then
-    echo "Usage: $0 <EC2_IP_ADDRESS>"
-    echo "Example: $0 54.123.45.67"
-    exit 1
-fi
+# Defaults
+DEFAULT_EC2_IP="3.85.167.225"
+SSH_KEY="$HOME/.ssh/ticket-predictor-key.pem"
 
-EC2_IP=$1
+EC2_IP="${1:-$DEFAULT_EC2_IP}"
 EC2_USER="ubuntu"
-EC2_PATH="/home/ubuntu/ticket-price-predictor/data/raw/listings"
-LOCAL_PATH="./data/raw/listings"
+EC2_LISTINGS_PATH="/home/ubuntu/ticket-price-predictor/data/raw/listings"
+EC2_SNAPSHOTS_PATH="/home/ubuntu/ticket-price-predictor/data/raw/snapshots"
+LOCAL_LISTINGS_PATH="./data/raw/listings"
+LOCAL_SNAPSHOTS_PATH="./data/raw/snapshots"
 
 echo "=== Syncing data from EC2 ==="
-echo "EC2: $EC2_USER@$EC2_IP:$EC2_PATH"
-echo "Local: $LOCAL_PATH"
+echo "EC2: $EC2_USER@$EC2_IP"
 echo ""
 
-# Create local directory if it doesn't exist
-mkdir -p "$LOCAL_PATH"
+# Create local directories if they don't exist
+mkdir -p "$LOCAL_LISTINGS_PATH"
+mkdir -p "$LOCAL_SNAPSHOTS_PATH"
 
-# Sync using rsync (preserves partitions and only transfers new files)
+# Sync listings
+echo "--- Syncing listings ---"
 rsync -avz --progress \
-    -e "ssh -o StrictHostKeyChecking=accept-new" \
-    "$EC2_USER@$EC2_IP:$EC2_PATH/" \
-    "$LOCAL_PATH/"
+    -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new" \
+    "$EC2_USER@$EC2_IP:$EC2_LISTINGS_PATH/" \
+    "$LOCAL_LISTINGS_PATH/"
+
+# Sync snapshots
+echo ""
+echo "--- Syncing snapshots ---"
+rsync -avz --progress \
+    -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new" \
+    "$EC2_USER@$EC2_IP:$EC2_SNAPSHOTS_PATH/" \
+    "$LOCAL_SNAPSHOTS_PATH/" 2>/dev/null || echo "No snapshots directory on EC2 yet"
 
 echo ""
 echo "=== Sync Complete ==="
@@ -38,10 +47,11 @@ python3 -c "
 from pathlib import Path
 import pyarrow.parquet as pq
 
-listings_dir = Path('data/raw/listings')
-total = 0
-for f in listings_dir.rglob('*.parquet'):
-    table = pq.read_table(f)
-    total += len(table)
-print(f'Total listings in local database: {total:,}')
+for name in ['listings', 'snapshots']:
+    data_dir = Path(f'data/raw/{name}')
+    total = 0
+    for f in data_dir.rglob('*.parquet'):
+        table = pq.read_table(f)
+        total += len(table)
+    print(f'Total {name} in local database: {total:,}')
 " 2>/dev/null || echo "Run 'python scripts/check_data.py' to see stats"

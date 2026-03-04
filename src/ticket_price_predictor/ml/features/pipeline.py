@@ -1,7 +1,6 @@
 """Feature pipeline orchestration."""
 
 import logging
-import warnings
 from typing import Any
 
 import pandas as pd
@@ -13,6 +12,7 @@ from ticket_price_predictor.ml.features.performer import PerformerFeatureExtract
 from ticket_price_predictor.ml.features.popularity import PopularityFeatureExtractor
 from ticket_price_predictor.ml.features.regional import RegionalPopularityFeatureExtractor
 from ticket_price_predictor.ml.features.seating import SeatingFeatureExtractor
+from ticket_price_predictor.ml.features.snapshot import SnapshotFeatureExtractor
 from ticket_price_predictor.ml.features.timeseries import (
     MomentumFeatureExtractor,
     TimeSeriesFeatureExtractor,
@@ -30,7 +30,8 @@ class FeaturePipeline:
 
     def __init__(
         self,
-        include_momentum: bool = True,
+        include_momentum: bool = False,
+        include_snapshot: bool = True,
         include_popularity: bool = True,
         include_regional: bool = True,
         include_listing: bool = True,
@@ -43,7 +44,9 @@ class FeaturePipeline:
         """Initialize feature pipeline.
 
         Args:
-            include_momentum: Whether to include momentum features
+            include_momentum: Whether to include legacy momentum features (deprecated,
+                default False — replaced by snapshot features)
+            include_snapshot: Whether to include temporal snapshot features (default True)
             include_popularity: Whether to include external popularity features
             include_regional: Whether to include regional popularity features
             include_listing: Whether to include listing context features
@@ -65,10 +68,18 @@ class FeaturePipeline:
         ]
 
         if include_event_pricing:
-            self._extractors.append(EventPricingFeatureExtractor())
+            ep_kwargs: dict[str, Any] = {}
+            if extractor_params and "EventPricingFeatureExtractor" in extractor_params:
+                ep_init = extractor_params["EventPricingFeatureExtractor"]
+                if "include_section_feature" in ep_init:
+                    ep_kwargs["include_section_feature"] = ep_init.pop("include_section_feature")
+            self._extractors.append(EventPricingFeatureExtractor(**ep_kwargs))
 
         if include_momentum:
             self._extractors.append(MomentumFeatureExtractor())
+
+        if include_snapshot:
+            self._extractors.append(SnapshotFeatureExtractor())
 
         if include_regional:
             self._extractors.append(RegionalPopularityFeatureExtractor())
@@ -218,55 +229,3 @@ class FeaturePipeline:
         for extractor in self._extractors:
             features_list.append(extractor.extract(df))
         return pd.concat(features_list, axis=1)
-
-
-def prepare_training_data(
-    df: pd.DataFrame,
-    target_col: str = "listing_price",
-    include_momentum: bool = False,
-    include_popularity: bool = True,
-    include_regional: bool = True,
-    popularity_service: Any | None = None,
-) -> tuple[pd.DataFrame, pd.Series]:
-    """Prepare training data with features and target.
-
-    .. deprecated::
-        This function fits the pipeline on the entire dataset, which causes
-        data leakage when used before splitting. Use ``ModelTrainer.train()``
-        instead, which splits first and fits only on training data.
-
-    Args:
-        df: Raw listing DataFrame
-        target_col: Column to use as target
-        include_momentum: Whether to compute momentum features
-        include_popularity: Whether to include external popularity features
-        include_regional: Whether to include regional popularity features
-        popularity_service: PopularityService instance for API-based features
-
-    Returns:
-        Tuple of (features DataFrame, target Series)
-    """
-    warnings.warn(
-        "prepare_training_data() fits the feature pipeline on all data, causing "
-        "data leakage. Use ModelTrainer.train() which splits first and fits only "
-        "on training data.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    # Compute momentum if needed
-    if include_momentum and "price_momentum_7d" not in df.columns:
-        df = MomentumFeatureExtractor.compute_momentum_features(df)
-
-    # Extract features
-    pipeline = FeaturePipeline(
-        include_momentum=include_momentum,
-        include_popularity=include_popularity,
-        include_regional=include_regional,
-        popularity_service=popularity_service,
-    )
-    X = pipeline.fit_transform(df)
-
-    # Get target
-    y = df[target_col].copy()
-
-    return X, y

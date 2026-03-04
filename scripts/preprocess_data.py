@@ -10,7 +10,7 @@ Usage:
 
 import argparse
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -331,7 +331,7 @@ def main() -> None:
         # Update watermark for incremental processing
         if args.incremental and latest_partition and args.dataset:
             watermark[args.dataset]["last_partition"] = latest_partition
-            watermark[args.dataset]["last_processed_ts"] = datetime.utcnow().isoformat()
+            watermark[args.dataset]["last_processed_ts"] = datetime.now(UTC).isoformat()
             save_watermark(args.watermark_file, watermark)
             print(f"Watermark updated: {latest_partition}")
 

@@ -2,7 +2,7 @@
 
 ## System Overview
 
-ML system for predicting secondary-market (resale) ticket prices at the seat-zone level. Ingests event metadata from Ticketmaster, scrapes actual resale prices from VividSeats/StubHub, enriches with popularity data from YouTube Music and Last.fm, and trains a LightGBM model with 59 raw features across 9 extractor domains (54 active after zero-variance removal; listing domain disabled in v28).
+ML system for predicting secondary-market (resale) ticket prices at the seat-zone level. Ingests event metadata from Ticketmaster, scrapes actual resale prices from VividSeats/StubHub, enriches with popularity data from YouTube Music and Last.fm, and trains a LightGBM model with 67 raw features across 10 extractor domains (listing domain disabled; snapshot domain enabled by default).
 
 ## Layer Diagram
 

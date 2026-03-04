@@ -68,6 +68,7 @@ class PopularityFeatureExtractor(FeatureExtractor):
             "youtube_views_log",
             "lastfm_listeners_log",
             "lastfm_play_count_log",
+            "popularity_data_available",
         ]
 
     def fit(self, df: pd.DataFrame) -> PopularityFeatureExtractor:
@@ -113,7 +114,7 @@ class PopularityFeatureExtractor(FeatureExtractor):
             df: Input DataFrame
 
         Returns:
-            DataFrame with 6 popularity features
+            DataFrame with 7 popularity features
         """
         result = pd.DataFrame(index=df.index)
 
@@ -123,6 +124,7 @@ class PopularityFeatureExtractor(FeatureExtractor):
         yt_views = []
         lfm_listeners = []
         lfm_play_counts = []
+        data_available = []
 
         for _, row in df.iterrows():
             artist = str(row.get("artist_or_team", "Unknown")).lower().strip()
@@ -135,6 +137,7 @@ class PopularityFeatureExtractor(FeatureExtractor):
                 yt_views.append(_safe_log10(pop.youtube_views))
                 lfm_listeners.append(_safe_log10(pop.lastfm_listeners))
                 lfm_play_counts.append(_safe_log10(pop.lastfm_play_count))
+                data_available.append(1.0)
             else:
                 scores.append(0.0)
                 tiers.append(0)
@@ -142,6 +145,7 @@ class PopularityFeatureExtractor(FeatureExtractor):
                 yt_views.append(0.0)
                 lfm_listeners.append(0.0)
                 lfm_play_counts.append(0.0)
+                data_available.append(0.0)
 
         result["popularity_score"] = scores
         result["popularity_tier_encoded"] = tiers
@@ -149,6 +153,7 @@ class PopularityFeatureExtractor(FeatureExtractor):
         result["youtube_views_log"] = yt_views
         result["lastfm_listeners_log"] = lfm_listeners
         result["lastfm_play_count_log"] = lfm_play_counts
+        result["popularity_data_available"] = data_available
 
         return result
 

@@ -1,12 +1,26 @@
 """Seating and zone feature extraction."""
 
-import hashlib
 import re
 
 import pandas as pd
 
 from ticket_price_predictor.ml.features.base import FeatureExtractor
 from ticket_price_predictor.normalization.seat_zones import SeatZone, SeatZoneMapper
+
+# Keywords that indicate premium/high-value seating within any zone
+_PREMIUM_KEYWORDS = frozenset(
+    {"vip", "platinum", "premium", "pit", "field", "courtside", "front row", "suite"}
+)
+# Exclude GA sections — even if they mention "pit", GA floor is not premium-priced
+_PREMIUM_EXCLUDE = frozenset({"general admission"})
+
+
+def _is_premium_section(section: str) -> int:
+    """Return 1 if section name indicates a premium seat, else 0."""
+    s = str(section).lower()
+    if any(excl in s for excl in _PREMIUM_EXCLUDE):
+        return 0
+    return int(any(kw in s for kw in _PREMIUM_KEYWORDS))
 
 
 class SeatingFeatureExtractor(FeatureExtractor):
@@ -39,9 +53,9 @@ class SeatingFeatureExtractor(FeatureExtractor):
             "seat_zone_encoded",
             "zone_price_ratio",
             "row_numeric",
-            "section_hash",
             "is_floor",
             "is_ga",
+            "is_premium",
         ]
 
     def extract(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -62,11 +76,6 @@ class SeatingFeatureExtractor(FeatureExtractor):
         else:
             result["row_numeric"] = 10  # Default mid-row
 
-        # Section hash for venue-specific patterns (deterministic across sessions)
-        result["section_hash"] = df["section"].apply(
-            lambda s: int(hashlib.md5(s.lower().strip().encode()).hexdigest(), 16) % 1000
-        )
-
         # Binary features
         section_lower = df["section"].str.lower()
         result["is_floor"] = (
@@ -75,6 +84,9 @@ class SeatingFeatureExtractor(FeatureExtractor):
         result["is_ga"] = (section_lower.str.contains("ga|general admission", regex=True)).astype(
             int
         )
+
+        # Premium section detection: keyword matching on raw section name
+        result["is_premium"] = df["section"].fillna("").apply(_is_premium_section)
 
         return result
 

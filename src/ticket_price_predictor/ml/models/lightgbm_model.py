@@ -430,9 +430,9 @@ class QuantileLightGBMModel(PriceModel):
         assert self._model_median is not None
         assert self._model_lower is not None
         assert self._model_upper is not None
-        median: np.ndarray = self._model_median.predict(X)  # type: ignore[assignment,type-arg]
-        lower: np.ndarray = self._model_lower.predict(X)  # type: ignore[assignment,type-arg]
-        upper: np.ndarray = self._model_upper.predict(X)  # type: ignore[assignment,type-arg]
+        median: np.ndarray = self._model_median.predict(X)  # type: ignore[assignment]
+        lower: np.ndarray = self._model_lower.predict(X)  # type: ignore[assignment]
+        upper: np.ndarray = self._model_upper.predict(X)  # type: ignore[assignment]
 
         return median, lower, upper
 

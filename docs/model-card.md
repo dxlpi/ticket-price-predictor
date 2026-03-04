@@ -8,7 +8,7 @@
 | **Version** | v28 |
 | **Framework** | LightGBM 4.3+, scikit-learn 1.4+ |
 | **Task** | Regression — predict secondary-market ticket listing price |
-| **Input** | Event metadata + listing attributes (54 features after zero-variance removal) |
+| **Input** | Event metadata + listing attributes (54 features after zero-variance removal; v30 pipeline: 67 raw features across 10 domains) |
 | **Output** | Predicted price (USD) + 95% confidence interval + price direction |
 | **Training time** | ~47 seconds |
 | **Artifact** | `data/models/lightgbm_v28.joblib` |

@@ -19,6 +19,164 @@ from ticket_price_predictor.ml.training.splitter import DataSplit, TimeBasedSpli
 ModelType = Literal["baseline", "lightgbm", "quantile"]
 
 
+def _join_snapshot_features(
+    listings_df: pd.DataFrame,
+    snapshot_df: pd.DataFrame,
+    zone_mapper: Any,
+) -> pd.DataFrame:
+    """Join temporal snapshot features to listings.
+
+    MUST be called AFTER split_raw(), once per split independently, to
+    prevent cross-split information leakage (snapshots contain price_avg
+    derived from listing prices).
+
+    Uses pd.merge_asof() to find the nearest prior snapshot per
+    (event_id, seat_zone) for each listing row. Temporal delta features
+    are computed from the earliest and matched (latest prior) snapshot.
+
+    Args:
+        listings_df: One split's raw listing DataFrame
+        snapshot_df: Raw snapshot DataFrame from DataLoader.load_snapshots()
+        zone_mapper: Fitted SeatZoneMapper instance
+
+    Returns:
+        listings_df enriched with _snap_* columns (same row count)
+    """
+    result = listings_df.copy()
+
+    # Early return when no snapshot data is available
+    if snapshot_df.empty:
+        for col in [
+            "_snap_inventory_change_rate",
+            "_snap_zone_price_trend",
+            "_snap_count",
+            "_snap_price_range",
+        ]:
+            result[col] = 0.0
+        return result
+
+    result["_pos"] = range(len(result))
+
+    # Map raw section names → normalized zone strings
+    result["_zone"] = result["section"].apply(
+        lambda s: zone_mapper.normalize_zone_name(str(s)).value
+    )
+    result["timestamp"] = pd.to_datetime(result["timestamp"], utc=True)
+
+    # Prepare snapshots (seat_zone is already a string; SeatZone is StrEnum)
+    snap = snapshot_df.copy()
+    snap["_zone"] = snap["seat_zone"]
+    snap["timestamp"] = pd.to_datetime(snap["timestamp"], utc=True)
+    snap = snap.sort_values("timestamp")
+
+    # Precompute per-(event_id, _zone): earliest snapshot and total count
+    snap_agg = (
+        snap.groupby(["event_id", "_zone"])
+        .agg(
+            _earliest_price_avg=("price_avg", "first"),
+            _earliest_inv=("inventory_remaining", "first"),
+            _earliest_ts=("timestamp", "first"),
+            _snap_count_raw=("timestamp", "count"),
+        )
+        .reset_index()
+    )
+
+    # Rename snapshot columns before merge_asof to avoid collision with listing columns
+    snap_for_merge = snap[
+        [
+            "event_id",
+            "_zone",
+            "timestamp",
+            "price_avg",
+            "price_min",
+            "price_max",
+            "inventory_remaining",
+        ]
+    ].rename(
+        columns={
+            "timestamp": "_snap_ts",
+            "price_avg": "_snap_price_avg",
+            "price_min": "_snap_price_min",
+            "price_max": "_snap_price_max",
+            "inventory_remaining": "_snap_inv",
+        }
+    )
+
+    # merge_asof: for each listing, find latest snapshot with _snap_ts <= listing.timestamp
+    result_sorted = result.sort_values("timestamp")
+    merged = pd.merge_asof(
+        result_sorted,
+        snap_for_merge,
+        left_on="timestamp",
+        right_on="_snap_ts",
+        by=["event_id", "_zone"],
+        direction="backward",
+    )
+
+    # Join per-group aggregates
+    merged = merged.merge(snap_agg, on=["event_id", "_zone"], how="left")
+
+    # --- Compute temporal delta features ---
+
+    # Hours between earliest and matched snapshot
+    delta_hours = (
+        (merged["_snap_ts"] - merged["_earliest_ts"]).dt.total_seconds().div(3600).fillna(0.0)
+    )
+
+    # Inventory change rate: tickets/hour (negative = selling)
+    inv_delta = merged["_snap_inv"].fillna(0.0) - merged["_earliest_inv"].fillna(0.0)
+    merged["_snap_inventory_change_rate"] = inv_delta / delta_hours.clip(lower=1.0)
+
+    # Zone price trend: fractional price change from earliest to matched snapshot
+    snap_price = merged["_snap_price_avg"].fillna(merged["_snap_price_min"].fillna(0.0))
+    earliest_price = merged["_earliest_price_avg"].fillna(0.0)
+    merged["_snap_zone_price_trend"] = (snap_price - earliest_price) / earliest_price.clip(
+        lower=1.0
+    )
+
+    # Snapshot count: log1p(number of snapshots for this event-zone)
+    merged["_snap_count"] = np.log1p(merged["_snap_count_raw"].fillna(0.0))
+
+    # Price range width at matched snapshot: (max - min) / avg
+    snap_avg = merged["_snap_price_avg"].fillna(merged["_snap_price_min"].fillna(0.0))
+    snap_min = merged["_snap_price_min"].fillna(0.0)
+    snap_max = merged["_snap_price_max"].fillna(snap_avg)
+    merged["_snap_price_range"] = (snap_max - snap_min) / snap_avg.clip(lower=1.0)
+
+    # Zero out features for rows where merge_asof found no backward match.
+    # Without this, snap_agg aggregates produce nonsensical deltas against
+    # the NaN-filled matched snapshot values.
+    no_match = merged["_snap_ts"].isna()
+    for col in [
+        "_snap_inventory_change_rate",
+        "_snap_zone_price_trend",
+        "_snap_count",
+        "_snap_price_range",
+    ]:
+        merged.loc[no_match, col] = 0.0
+        merged[col] = merged[col].fillna(0.0)
+
+    # Drop temporary join columns
+    drop_cols = [
+        "_zone",
+        "_snap_ts",
+        "_snap_price_avg",
+        "_snap_price_min",
+        "_snap_price_max",
+        "_snap_inv",
+        "_earliest_ts",
+        "_earliest_price_avg",
+        "_earliest_inv",
+        "_snap_count_raw",
+    ]
+    merged = merged.drop(columns=[c for c in drop_cols if c in merged.columns])
+
+    # Restore original row order
+    merged = merged.sort_values("_pos").drop(columns=["_pos"])
+    merged.index = listings_df.index
+    return merged
+
+
 class ModelTrainer:
     """Train and evaluate models."""
 
@@ -78,6 +236,7 @@ class ModelTrainer:
         popularity_service: Any | None = None,
         pipeline_kwargs: dict[str, Any] | None = None,
         sample_weight_strategy: Literal["none", "inverse_artist_freq"] = "none",
+        snapshot_df: pd.DataFrame | None = None,
     ) -> TrainingMetrics:
         """Train model on data.
 
@@ -98,6 +257,9 @@ class ModelTrainer:
                 "none" (default): uniform weights.
                 "inverse_artist_freq": weight = 1/count_per_artist, normalized
                 so that weights sum to n_train.
+            snapshot_df: Optional raw snapshot DataFrame from DataLoader.load_snapshots().
+                When provided, temporal delta features are joined to each split
+                independently AFTER split_raw() to prevent leakage.
 
         Returns:
             Training metrics
@@ -154,21 +316,35 @@ class ModelTrainer:
             if test_unknown:
                 print(f"  WARNING: {len(test_unknown)} test artists not in train: {test_unknown}")
 
+        # Enrich each split independently with snapshot features (AFTER split to prevent leakage)
+        train_df = raw_split.train_df
+        val_df = raw_split.val_df
+        test_df = raw_split.test_df
+
+        if snapshot_df is not None and not snapshot_df.empty:
+            from ticket_price_predictor.normalization.seat_zones import SeatZoneMapper
+
+            zone_mapper = SeatZoneMapper()
+            print(f"Joining snapshot features ({len(snapshot_df)} snapshots)...")
+            train_df = _join_snapshot_features(train_df, snapshot_df, zone_mapper)
+            val_df = _join_snapshot_features(val_df, snapshot_df, zone_mapper)
+            test_df = _join_snapshot_features(test_df, snapshot_df, zone_mapper)
+
         # Fit feature pipeline on training data ONLY
         print("Extracting features (fit on train only)...")
         _pipeline_kwargs: dict[str, Any] = {
-            "include_momentum": True,
+            "include_momentum": False,
             "popularity_service": popularity_service,
         }
         if pipeline_kwargs:
             _pipeline_kwargs.update(pipeline_kwargs)
         self._feature_pipeline = FeaturePipeline(**_pipeline_kwargs)
-        self._feature_pipeline.fit(raw_split.train_df)
+        self._feature_pipeline.fit(train_df)
 
         # Transform each split independently
-        X_train = self._feature_pipeline.transform(raw_split.train_df)
-        X_val = self._feature_pipeline.transform(raw_split.val_df)
-        X_test = self._feature_pipeline.transform(raw_split.test_df)
+        X_train = self._feature_pipeline.transform(train_df)
+        X_val = self._feature_pipeline.transform(val_df)
+        X_test = self._feature_pipeline.transform(test_df)
 
         # Remove zero-variance features (constants add noise, waste splits)
         zero_var_cols = [c for c in X_train.columns if X_train[c].nunique() <= 1]
@@ -192,9 +368,9 @@ class ModelTrainer:
                 X_test[c] = np.log1p(X_test[c].clip(lower=0))
 
         # Log-transform target for better handling of skewed price distribution
-        y_train = np.log1p(raw_split.train_df[self._target_col].values)
-        y_val = np.log1p(raw_split.val_df[self._target_col].values)
-        y_test_raw = raw_split.test_df[self._target_col].values  # keep raw for evaluation
+        y_train = np.log1p(train_df[self._target_col].values)
+        y_val = np.log1p(val_df[self._target_col].values)
+        y_test_raw = test_df[self._target_col].values  # keep raw for evaluation
 
         print(f"Feature shape: {X_train.shape}")
         print(f"Features: {list(X_train.columns)}")
@@ -203,9 +379,9 @@ class ModelTrainer:
         # Compute sample weights for training set
         sample_weight: np.ndarray[Any, Any] | None = None
         if sample_weight_strategy == "inverse_artist_freq":
-            if "artist_or_team" in raw_split.train_df.columns:
-                artist_counts = raw_split.train_df["artist_or_team"].value_counts()
-                weights = raw_split.train_df["artist_or_team"].map(lambda a: 1.0 / artist_counts[a])
+            if "artist_or_team" in train_df.columns:
+                artist_counts = train_df["artist_or_team"].value_counts()
+                weights = train_df["artist_or_team"].map(lambda a: 1.0 / artist_counts[a])
                 # Normalize so weights sum to n_train (keeps effective scale)
                 weights = weights / weights.sum() * len(weights)
                 sample_weight = weights.values
@@ -286,7 +462,16 @@ class ModelTrainer:
         """
         aliases: dict[str, str] = {
             "BTS - Bangtan Boys": "BTS",
+            "BTS (방탄소년단)": "BTS",
             "Rush - Rock Band": "Rush",
+            "Taylor Swift - Pop": "Taylor Swift",
+            "Bad Bunny - Latin Trap": "Bad Bunny",
+            "Drake - Hip Hop": "Drake",
+            "Beyoncé - R&B": "Beyoncé",
+            "The Weeknd - R&B": "The Weeknd",
+            "Billie Eilish - Pop": "Billie Eilish",
+            "Harry Styles - Pop": "Harry Styles",
+            "Coldplay - Rock": "Coldplay",
         }
         mapped = df["artist_or_team"].map(aliases)
         changed = mapped.notna()

@@ -141,7 +141,7 @@ def main() -> None:
         from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
 
         print("\nExtracting features (legacy: fit on all data)...")
-        pipeline = FeaturePipeline(include_momentum=True)
+        pipeline = FeaturePipeline(include_momentum=False)
         X = pipeline.fit_transform(df)
         y = df["listing_price"]
         print(f"  Features: {X.shape[1]} columns")

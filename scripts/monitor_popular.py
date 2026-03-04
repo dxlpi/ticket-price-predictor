@@ -262,7 +262,7 @@ async def collect_listings_for_events(
                         artist_or_team=event.get("performer", "Unknown Artist"),
                         venue_name=event["venue"],
                         city=event["city"],
-                        event_datetime=datetime.now(UTC),
+                        event_datetime=event.get("event_datetime") or datetime.now(UTC),
                         event_url=event["url"],
                     )
 

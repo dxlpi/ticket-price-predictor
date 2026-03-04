@@ -17,7 +17,7 @@ src/ticket_price_predictor/
 ├── popularity/             # External popularity aggregation (YouTube Music, Last.fm)
 ├── synthetic/              # Synthetic data generation
 └── ml/                     # Machine learning pipeline
-    ├── features/           # Feature extractors (9 domains, 59 features)
+    ├── features/           # Feature extractors (10 domains, 67 features with snapshot / 63 without)
     │   ├── performer.py    # Artist stats + artist×zone encoding
     │   ├── event.py        # Event/location features
     │   ├── seating.py      # Seat zone features
@@ -111,12 +111,13 @@ When you encounter a major issue during any task (bugs with non-obvious root cau
 - Key deps: pydantic, pyarrow, lightgbm, scikit-learn, playwright
 - API keys in `.env`: `TICKETMASTER_API_KEY`, `LASTFM_API_KEY`
 
-## Current Model Performance (v28)
+## Current Model Performance (v30)
 
-- **MAE**: $150.08
-- **MAPE**: 41.0%
-- **R²**: 0.53
-- **RMSE**: $237.35
-- **Top features**: `event_zone_median_price` (60.2%), `event_median_price` (15.4%), `venue_median_price` (6.2%)
-- **Key improvements over v21**: EventPricingFeatureExtractor (event/zone-level target encoding), artist×zone median price, zone mapping fix (sections 400-499), Bayesian-smoothed ArtistStatsCache, artist name normalization
-- **Feature pipeline**: 8 domains, 54 features (after zero-variance removal)
+- **MAE**: $133.86
+- **MAPE**: 40.0%
+- **R²**: 0.56
+- **RMSE**: $221.22
+- **Dataset**: 136 events, 42 artists (35,476 listings)
+- **Top features**: `event_section_median_price` (57.3%), `event_zone_median_price` (21.1%), `artist_regional_avg_price` (7.1%), `event_median_price` (6.8%), `artist_venue_price` (1.2%)
+- **Key improvements over v29-section**: artist_venue_price interaction feature (+1.2% importance), momentum disabled by default, snapshot infrastructure (pending data), 58 features after zero-variance removal. MAE improved $14.41 (9.7%), R² improved 0.46→0.56
+- **Feature pipeline**: 10 domains, 67 raw features (with snapshot) / 63 without snapshot; 58 active after zero-variance removal

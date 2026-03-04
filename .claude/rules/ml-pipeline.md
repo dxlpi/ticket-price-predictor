@@ -34,7 +34,7 @@ Current smoothing factors by module:
 | `event_pricing.py` | 20 | Events have few listings per zone |
 | `artist_stats.py` | 50 | Artists have moderate sample sizes |
 | `regional.py` | 75 | Cities have larger, more stable samples |
-| `venue.py` | 200 | Venues have the largest samples |
+| `venue.py` | 75 | Venues — lowered from 200 for better signal on moderate-sample venues |
 
 ## Target Transform
 

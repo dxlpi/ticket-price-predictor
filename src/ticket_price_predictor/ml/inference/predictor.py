@@ -1,6 +1,6 @@
 """Price prediction service."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,11 @@ class PricePredictor:
         self._model_version = model_version
         self._cold_start = cold_start_handler or ColdStartHandler()
         self._feature_pipeline = FeaturePipeline(
-            include_momentum=True,
+            include_momentum=False,
+            # Snapshot features require pre-joined _snap_* columns from ModelTrainer;
+            # at inference time no snapshot join occurs, so disable to avoid
+            # all predictions using training-mean defaults for these features.
+            include_snapshot=False,
             popularity_service=popularity_service,
         )
 
@@ -169,7 +173,7 @@ class PricePredictor:
             predicted_direction=direction,
             direction_probability=direction_prob,
             model_version=self._model_version,
-            prediction_timestamp=datetime.utcnow(),
+            prediction_timestamp=datetime.now(UTC),
         )
 
     def predict_batch(
@@ -192,7 +196,7 @@ class PricePredictor:
                 artist_or_team=row.get("artist_or_team", "Unknown"),
                 venue_name=row.get("venue_name", "Unknown"),
                 city=row.get("city", "Unknown"),
-                event_datetime=row.get("event_datetime", datetime.now()),
+                event_datetime=row.get("event_datetime", datetime.now(UTC)),
                 section=row.get("section", "Upper Level"),
                 row=row.get("row", "10"),
                 days_to_event=row.get("days_to_event", 14),

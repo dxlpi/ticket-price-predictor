@@ -1,6 +1,6 @@
 """ML schemas for predictions and training metrics."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal
 
@@ -44,7 +44,7 @@ class PricePrediction(BaseModel):
     # Metadata
     model_version: str = Field(..., description="Model version used for prediction")
     prediction_timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="When prediction was made"
+        default_factory=lambda: datetime.now(UTC), description="When prediction was made"
     )
 
     @classmethod
@@ -72,7 +72,7 @@ class TrainingMetrics(BaseModel):
 
     model_version: str = Field(..., description="Model version")
     model_type: str = Field(..., description="Model type (baseline, lightgbm, etc.)")
-    trained_at: datetime = Field(default_factory=datetime.utcnow)
+    trained_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # Dataset info
     n_train_samples: int = Field(..., ge=0)

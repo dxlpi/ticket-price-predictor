@@ -12,6 +12,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -109,6 +110,24 @@ def parse_args() -> argparse.Namespace:
         help="Sample weighting strategy (default: none)",
     )
 
+    parser.add_argument(
+        "--no-listing",
+        action="store_true",
+        help="Disable listing context features (recommended: reduces noise)",
+    )
+
+    parser.add_argument(
+        "--section-feature",
+        action="store_true",
+        help="Enable experimental section-level pricing feature",
+    )
+
+    parser.add_argument(
+        "--no-snapshot",
+        action="store_true",
+        help="Disable temporal snapshot features",
+    )
+
     return parser.parse_args()
 
 
@@ -181,6 +200,7 @@ def main() -> None:
     print("Loading data...")
     loader = DataLoader(args.data_dir)
     df = loader.load_all_listings()
+    snapshot_df = pd.DataFrame() if args.no_snapshot else loader.load_snapshots()
 
     if df.empty:
         print("ERROR: No data found. Run data collection first.")
@@ -196,8 +216,19 @@ def main() -> None:
     # Initialize popularity service (YouTube Music + Last.fm)
     popularity_service = PopularityService()
 
-    # Build pipeline_kwargs from Optuna smoothing factors (if loaded from study)
+    # Build pipeline_kwargs from CLI flags and Optuna smoothing factors
     study_pipeline_kwargs: dict[str, Any] | None = None
+    if args.no_listing:
+        study_pipeline_kwargs = {"include_listing": False}
+    if args.section_feature:
+        if study_pipeline_kwargs is None:
+            study_pipeline_kwargs = {}
+        ep_params = study_pipeline_kwargs.setdefault("extractor_params", {})
+        ep_params.setdefault("EventPricingFeatureExtractor", {})["include_section_feature"] = True
+    if args.no_snapshot:
+        if study_pipeline_kwargs is None:
+            study_pipeline_kwargs = {}
+        study_pipeline_kwargs["include_snapshot"] = False
     if args.from_study and smoothing:
         extractor_params: dict[str, dict[str, Any]] = {}
         if "event_pricing_smoothing" in smoothing:
@@ -250,6 +281,7 @@ def main() -> None:
                 params=params,
                 popularity_service=popularity_service,
                 pipeline_kwargs=study_pipeline_kwargs,
+                snapshot_df=snapshot_df,
             )
             fold_metrics.append(m)
 
@@ -277,6 +309,7 @@ def main() -> None:
             params=params,
             popularity_service=popularity_service,
             pipeline_kwargs=study_pipeline_kwargs,
+            snapshot_df=snapshot_df,
         )
 
     # Save model

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ class YouTubePopularity:
 
     def __init__(self) -> None:
         """Initialize YouTube Music client. No API key needed."""
+        self._ytmusic: Any = None
+        self._available = False
         try:
             from ytmusicapi import YTMusic
 
@@ -30,8 +33,6 @@ class YouTubePopularity:
             self._available = True
         except Exception as e:
             logger.warning(f"YouTube Music client initialization failed: {e}")
-            self._ytmusic = None
-            self._available = False
 
     @property
     def available(self) -> bool:

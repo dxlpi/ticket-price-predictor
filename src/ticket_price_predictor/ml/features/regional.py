@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from ticket_price_predictor.config import get_ml_config
@@ -333,7 +334,7 @@ class RegionalPopularityFeatureExtractor(FeatureExtractor):
             if city_stats is not None:
                 regional_avg.append(city_stats.avg_price)
                 regional_median.append(city_stats.median_price)
-                regional_count.append(float(city_stats.listing_count))
+                regional_count.append(float(np.log1p(city_stats.listing_count)))
             else:
                 regional_avg.append(default_avg)
                 regional_median.append(default_avg)
