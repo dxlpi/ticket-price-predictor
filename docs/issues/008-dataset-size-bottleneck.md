@@ -6,7 +6,7 @@
 
 ## Problem
 
-With only 81 events and 23 artists, the dataset is the primary constraint on model improvement. Many attempted feature engineering and model architecture improvements produced marginal or negative results because there simply isn't enough data for the model to learn robust patterns.
+With 136 events and 42 artists (up from 81/23 at time of writing), the dataset has grown substantially but remains a constraint on model improvement. Many attempted feature engineering and model architecture improvements produced marginal or negative results at smaller scale, but improvements are now succeeding with expanded data.
 
 ## Impact
 
@@ -32,7 +32,7 @@ Multiple improvement attempts failed due to insufficient data:
 ## Path Forward
 
 - Continue automated collection to grow the dataset
-- Prioritize artist diversity (currently 23 artists)
+- Prioritize artist diversity (currently 42 artists, up from 23)
 - Expand geographic coverage for regional features
 - Re-evaluate complex features as dataset grows past key thresholds
 
@@ -41,3 +41,4 @@ Multiple improvement attempts failed due to insufficient data:
 - Established data collection as the highest-ROI activity for model improvement
 - Deployed EC2-based automated collection infrastructure
 - Set expectation that model architecture changes have diminishing returns at current scale
+- Dataset has grown from 81 events/23 artists to 136 events/42 artists as of v30, enabling previously-failed features (section-level encoding) to now contribute positively

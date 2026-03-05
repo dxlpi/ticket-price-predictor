@@ -1,5 +1,5 @@
 #!/bin/bash
-# Create systemd service and timer for hourly data collection
+# Create systemd service and timer for data collection (every 8 hours)
 
 set -e
 
@@ -25,7 +25,7 @@ StandardError=append:/home/ubuntu/ticket-price-predictor/logs/monitor.log
 WantedBy=multi-user.target
 EOF
 
-# Create timer file (runs hourly)
+# Create timer file (runs every 8 hours)
 sudo tee /etc/systemd/system/ticket-monitor.timer > /dev/null << 'EOF'
 [Unit]
 Description=Ticket Price Monitor Timer
@@ -33,64 +33,33 @@ Requires=ticket-monitor.service
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=1h
+OnUnitActiveSec=8h
 Unit=ticket-monitor.service
 
 [Install]
 WantedBy=timers.target
 EOF
 
-# Create urgent service (near-term events only, every 30 min)
-sudo tee /etc/systemd/system/ticket-monitor-urgent.service > /dev/null << 'EOF'
-[Unit]
-Description=Ticket Price Monitor (Urgent - near-term events)
-After=network.target
-
-[Service]
-Type=oneshot
-User=ubuntu
-WorkingDirectory=/home/ubuntu/ticket-price-predictor
-Environment="PATH=/home/ubuntu/ticket-price-predictor/venv/bin:/usr/local/bin:/usr/bin:/bin"
-EnvironmentFile=/home/ubuntu/ticket-price-predictor/.env
-ExecStart=/home/ubuntu/ticket-price-predictor/venv/bin/python scripts/monitor_popular.py --urgent
-StandardOutput=append:/home/ubuntu/ticket-price-predictor/logs/monitor.log
-StandardError=append:/home/ubuntu/ticket-price-predictor/logs/monitor.log
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Create urgent timer (runs every 30 minutes)
-sudo tee /etc/systemd/system/ticket-monitor-urgent.timer > /dev/null << 'EOF'
-[Unit]
-Description=Ticket Price Monitor Timer (Urgent)
-Requires=ticket-monitor-urgent.service
-
-[Timer]
-OnBootSec=15min
-OnUnitActiveSec=30min
-Unit=ticket-monitor-urgent.service
-
-[Install]
-WantedBy=timers.target
-EOF
-
-# Reload systemd and enable timers
-echo "Enabling and starting timers..."
+# Reload systemd and enable timer
+echo "Enabling and starting timer..."
 sudo systemctl daemon-reload
+
+# Stop and disable old urgent timer if it exists
+sudo systemctl stop ticket-monitor-urgent.timer 2>/dev/null || true
+sudo systemctl disable ticket-monitor-urgent.timer 2>/dev/null || true
+sudo rm -f /etc/systemd/system/ticket-monitor-urgent.service
+sudo rm -f /etc/systemd/system/ticket-monitor-urgent.timer
+
 sudo systemctl enable ticket-monitor.timer
 sudo systemctl start ticket-monitor.timer
-sudo systemctl enable ticket-monitor-urgent.timer
-sudo systemctl start ticket-monitor-urgent.timer
 
 echo ""
-echo "=== Services Installed ==="
+echo "=== Service Installed ==="
 echo ""
 echo "Useful commands:"
-echo "  sudo systemctl status ticket-monitor.timer         # Full collection (hourly)"
-echo "  sudo systemctl status ticket-monitor-urgent.timer  # Urgent collection (30 min)"
-echo "  sudo systemctl status ticket-monitor.service       # Check service status"
-echo "  sudo journalctl -u ticket-monitor -f               # View logs"
+echo "  sudo systemctl status ticket-monitor.timer    # Collection timer (every 8h)"
+echo "  sudo systemctl status ticket-monitor.service  # Check service status"
+echo "  sudo journalctl -u ticket-monitor -f          # View logs"
 echo "  tail -f ~/ticket-price-predictor/logs/monitor.log  # View collection logs"
 echo ""
-echo "Full collection runs hourly. Urgent (≤14 day events) runs every 30 minutes."
+echo "Collection runs every 8 hours (~3 times per day)."

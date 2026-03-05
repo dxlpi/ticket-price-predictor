@@ -2,7 +2,7 @@
 
 **End-to-end ML system for predicting secondary-market ticket prices at the seat-zone level.**
 
-Built a production data pipeline and gradient boosting model that ingests live resale ticket data from multiple marketplaces, extracts 54 engineered features across 8 domains, and produces per-zone price predictions with 95% confidence intervals — all designed to help buyers identify optimal purchase timing.
+Built a production data pipeline and gradient boosting model that ingests live resale ticket data from multiple marketplaces, extracts 67 engineered features across 10 domains (58 active after zero-variance removal), and produces per-zone price predictions with 95% confidence intervals — all designed to help buyers identify optimal purchase timing.
 
 ## Motivation
 
@@ -21,9 +21,9 @@ Schemas & Storage     Pydantic v2 models + Hive-partitioned Parquet (PyArrow)
                                        |
 Preprocessing         11-stage composable pipeline (validate → normalize → enrich → flag)
                                        |
-Feature Engineering   8 extractor domains, 54 features, two-stage pipeline
+Feature Engineering   10 extractor domains, 67 features (58 active), two-stage pipeline
                                        |
-ML Pipeline           LightGBM (DART) + Quantile regression → price + 95% CI
+ML Pipeline           LightGBM (GBDT/DART) + Quantile regression → price + 95% CI
 ```
 
 ### Data Collection
@@ -51,21 +51,24 @@ An 11-stage composable pipeline where each stage returns structured results (dat
 
 Individual stage failures are logged without aborting the full pipeline. Checkpoint support enables resume from any stage.
 
-### Feature Engineering (54 features, 8 domains)
+### Feature Engineering (67 features, 10 domains; 58 active after zero-variance removal)
 
 Features are extracted in two stages — base extractors run on raw data, then interaction extractors run on the concatenated base features:
 
 | Domain | Features | Key Signals |
 |--------|----------|-------------|
-| Event Pricing | 5 | Event/zone-level Bayesian target encoding (**60%+ importance**) |
+| Event Pricing | 6 | Event/zone/section-level Bayesian target encoding (**57%+ importance**) |
 | Performer | 8 | Artist historical avg/median price, event count, artist x zone median |
 | Regional | 7 | City/country/global price stats with fallback chain |
-| Event | 8 | City tier, day of week, season, venue capacity bucket |
-| Popularity | 6 | YouTube + Last.fm normalized score and tier |
-| Seating | 6 | Zone ordinal encoding, row number, zone price ratio |
-| Time Series | 10 | Days to event, urgency buckets, 7d/30d momentum, volatility |
-| Venue | 3 | Venue avg/median price (Bayesian smoothed) |
-| Interactions | 6 | artist x zone, urgency x zone, popularity x zone |
+| Event | 9 | City tier, day of week, season, venue capacity, market saturation |
+| Popularity | 7 | YouTube + Last.fm normalized score, tier, and data availability flag |
+| Seating | 6 | Zone ordinal encoding, row number, zone price ratio, is_premium |
+| Time Series | 6 | Days to event, urgency buckets (momentum disabled by default) |
+| Venue | 4 | Venue avg/median/std price (Bayesian smoothed), is_known |
+| Interactions | 7 | artist x zone, urgency x zone, artist_venue_price, popularity x zone |
+| Snapshot | 4 | Inventory change rate, zone price trend, count, price range |
+
+Momentum features (4) and listing features (4) available but disabled by default after ablation studies showed no benefit.
 
 All group-level statistics use **Bayesian smoothing** (`smoothed = (n * group + m * global) / (n + m)`) with calibrated smoothing factors to prevent small-sample memorization.
 
@@ -78,36 +81,36 @@ The central invariant: **raw data is split temporally before any feature extract
 3. **Split raw data** — artist-stratified temporal split (70/15/15). Artists with < 10 samples go entirely to training
 4. **Fit feature pipeline on training data only**, then transform each split independently
 5. Remove zero-variance features, log-transform price-based features
-6. Train LightGBM with DART boosting and early stopping (patience=200)
+6. Train LightGBM with GBDT (default) or DART boosting, optional Huber loss, and early stopping (patience=200)
 7. Evaluate on held-out test set with inverse log-transform back to dollar scale
 
 ### Inference
 
-The prediction service produces per-zone price estimates with confidence intervals and a directional signal (UP / DOWN / STABLE). A cold-start fallback handles unseen artists using popularity tier lookups and configurable zone defaults.
+The prediction service produces per-zone price estimates with confidence intervals and a directional signal (UP / DOWN / STABLE). A cold-start fallback handles unseen artists using popularity tier lookups and configurable zone defaults. At save time, the fitted feature pipeline and log-transformed column list are serialized as companion files alongside the model, ensuring inference replicates exact training-time feature statistics.
 
 ## Results
 
-### Model Performance (v28)
+### Model Performance (v30)
 
 | Metric | Value |
 |--------|-------|
-| MAE | $150.08 |
-| MAPE | 41.0% |
-| R² | 0.53 |
-| RMSE | $237.35 |
-| Training samples | 19,099 |
-| Test samples | 4,104 |
-| Events | 81 |
-| Artists | 23 |
+| MAE | $133.86 |
+| MAPE | 40.0% |
+| R² | 0.56 |
+| RMSE | $221.22 |
+| Training samples | ~24,800 |
+| Test samples | ~5,300 |
+| Events | 136 |
+| Artists | 42 |
 
 ### Performance by Price Quartile
 
 | Quartile | Price Range | MAE |
 |----------|-------------|-----|
-| Q1 (Budget) | < $85 | ~$34 |
-| Q2 (Mid) | $85 – $165 | ~$70 |
-| Q3 (Premium) | $165 – $440 | ~$145 |
-| Q4 (VIP) | > $440 | ~$337 |
+| Q1 (Budget) | < $72 | ~$22 |
+| Q2 (Mid) | $72 – $143 | ~$62 |
+| Q3 (Premium) | $143 – $316 | ~$108 |
+| Q4 (VIP) | > $316 | ~$275 |
 
 The model performs well on the budget-to-premium range most relevant to the "buying window" use case. High-value VIP tickets remain difficult due to sparse data and wide price variance.
 
@@ -118,8 +121,10 @@ The model performs well on the budget-to-premium range most relevant to the "buy
 | v18 | $216.88 | Baseline before systematic improvements |
 | v21 | $141.95 | Fixed data leakage, zone mapping bug, artist normalization (**34.6% improvement**) |
 | v28 | $150.08 | Added EventPricingFeatureExtractor, artist x zone encoding, larger dataset |
+| v29 | $148.27 | Section-level target encoding, venue_price_std, expanded artist aliases, pipeline hardening |
+| v30 | $133.86 | Pipeline serialization, log-transform allowlist fix, artist_venue_price interaction, per-quartile/zone evaluation (**10.9% improvement over v29**) |
 
-The v18 → v21 improvement came primarily from fixing a data leakage bug (feature pipeline was being fit on the full dataset before splitting) and a zone mapping bug (sections 400–499 misclassified). The slight v21 → v28 MAE increase reflects dataset growth — more events introduce harder, more diverse examples — not model regression.
+The v18 → v21 improvement came primarily from fixing a data leakage bug (feature pipeline was being fit on the full dataset before splitting) and a zone mapping bug (sections 400–499 misclassified). The v21 → v28 MAE increase reflected dataset growth (81 vs ~40 events). The v29 → v30 improvement ($148.27 → $133.86) came from fixing a log-transform bug that was incorrectly transforming scale-independent features (std, ratio, cv), adding pipeline serialization to eliminate train/serve skew, and introducing the artist_venue_price interaction feature.
 
 ## Key Technical Decisions
 
@@ -139,7 +144,7 @@ Several intuitive improvements actually hurt performance, documented in the proj
 
 - **Deduplication hurts** (−$6.79 MAE): Repeated listings are a demand signal, not noise
 - **Segment-aware outlier capping hurts** (−$6.07 MAE): Per-segment sample sizes too small for stable quantile estimates
-- **Section-level target encoding hurts**: Too sparse (2–3 listings per section) — zone-level is the right granularity
+- **Section-level target encoding**: Initially hurt performance (v28, sparse data), but helps when Bayesian-smoothed with zone prior and gated behind flag (v29+, 57%+ feature importance)
 - **Listing features (source, quantity) add noise** (~$2 MAE): Disabled after ablation showed no benefit
 
 These findings reinforced that with a small dataset (81 events, 23 artists), simpler aggregation granularities outperform finer-grained ones.
@@ -154,11 +159,12 @@ These findings reinforced that with a small dataset (81 events, 23 artists), sim
 | Scraping | Playwright, playwright-stealth, httpx |
 | Popularity | ytmusicapi, Last.fm API |
 | Infrastructure | AWS EC2 (t3.micro), systemd timers, rsync |
-| Quality | mypy (strict), ruff, pytest (~370 tests), pytest-asyncio |
+| Quality | mypy (strict), ruff, pytest (455+ tests), pytest-asyncio |
 | Package Management | uv |
 
 ## What's Next
 
-- **More data** — the primary bottleneck. The automated EC2 pipeline is continuously expanding the dataset. More events and artists will improve the model's ability to generalize, especially for high-value tickets.
+- **More data** — the primary bottleneck. The automated EC2 pipeline is continuously expanding the dataset. More events and artists will improve the model's ability to generalize, especially for high-value tickets (Q4 MAE is still 12x worse than Q1).
 - **Temporal price trajectories** — modeling how prices evolve over time leading up to an event, rather than point-in-time prediction, to directly identify the buying window.
+- **Cross-validation tuning** — TemporalGroupCV infrastructure is in place for Optuna hyperparameter search. Running CV-based tuning should produce more robust hyperparameters as the dataset grows.
 - **User-facing application** — a lightweight web interface where a user can enter an event and receive a buy/wait recommendation with a confidence level.
