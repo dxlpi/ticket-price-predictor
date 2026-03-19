@@ -8,6 +8,7 @@ import json
 import logging
 import random
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from playwright.async_api import Browser, BrowserContext, Page, Response, async_playwright
@@ -136,6 +137,157 @@ class VividSeatsScraper:
 
         return []
 
+    async def _fetch_productions_page(
+        self,
+        category_id: int,
+        page: int,
+        rows: int,
+    ) -> dict[str, Any]:
+        """Fetch a page of productions from the hermes API via browser context.
+
+        Args:
+            category_id: Category ID (2 = concerts)
+            page: 1-based page number
+            rows: Number of results per page
+
+        Returns:
+            Parsed JSON response dict
+        """
+        if not self._page:
+            raise RuntimeError("Scraper not initialized. Use 'async with' context.")
+
+        url = (
+            f"{self.BASE_URL}/hermes/api/v1/productions"
+            f"?categoryId={category_id}&rows={rows}&page={page}"
+        )
+        result: dict[str, Any] = await self._page.evaluate(
+            """async (url) => {
+                const resp = await fetch(url, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                    },
+                    credentials: 'include',
+                });
+                if (!resp.ok) {
+                    throw new Error('HTTP ' + resp.status);
+                }
+                return await resp.json();
+            }""",
+            url,
+        )
+        return result
+
+    async def browse_concerts(
+        self,
+        max_pages: int = 10,
+        max_events: int = 200,
+        rows_per_page: int = 25,
+    ) -> list[ScrapedEvent]:
+        """Browse upcoming concerts via the hermes productions API.
+
+        Args:
+            max_pages: Maximum number of API pages to fetch
+            max_events: Stop after collecting this many events
+            rows_per_page: Results per API page (max 25)
+
+        Returns:
+            List of ScrapedEvent objects for upcoming concerts
+        """
+        if not self._page:
+            raise RuntimeError("Scraper not initialized. Use 'async with' context.")
+
+        # Navigate to the site first so browser cookies/session are established
+        await self._page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=60000)
+        await self._delay_random()
+
+        events: list[ScrapedEvent] = []
+        category_id = 2  # concerts
+
+        for page_num in range(1, max_pages + 1):
+            if len(events) >= max_events:
+                break
+
+            logger.debug(f"Fetching productions page {page_num}")
+            try:
+                data = await self._fetch_productions_page(category_id, page_num, rows_per_page)
+            except Exception as e:
+                logger.warning(f"Productions API page {page_num} failed: {e}")
+                break
+
+            items = data.get("items", [])
+            if not items:
+                logger.debug("No items returned — stopping pagination")
+                break
+
+            for item in items:
+                if len(events) >= max_events:
+                    break
+
+                # Skip parking listings
+                if item.get("subCategoryId") == 75:
+                    continue
+
+                # Extract headliner — skip events with no master performer
+                performers = item.get("performers", [])
+                headliner = next(
+                    (p["name"] for p in performers if p.get("master")),
+                    None,
+                )
+                if headliner is None:
+                    logger.debug(f"Skipped event with no master performer: {item.get('name')}")
+                    continue
+
+                try:
+                    event_id = str(item.get("id", ""))
+                    name = item.get("name", "Unknown Event")
+                    venue = item.get("venue", {})
+                    venue_name = venue.get("name", "Unknown Venue")
+                    city = venue.get("city", "Unknown")
+                    state = venue.get("state", "")
+
+                    # Parse date — format: 2026-08-01T12:55:00-04:00[America/New_York]
+                    local_date = item.get("localDate", "")
+                    try:
+                        date_str = local_date.split("[")[0] if "[" in local_date else local_date
+                        event_dt = datetime.fromisoformat(date_str)
+                    except (ValueError, TypeError):
+                        event_dt = datetime.now(UTC)
+
+                    web_path = item.get("webPath", "")
+                    event_url = f"{self.BASE_URL}{web_path}" if web_path else ""
+
+                    min_price = item.get("minPrice")
+                    ticket_count = item.get("ticketCount")
+
+                    event = ScrapedEvent(
+                        stubhub_event_id=event_id,
+                        event_name=name,
+                        artist_or_team=headliner,
+                        venue_name=venue_name,
+                        city=f"{city}, {state}".strip(", "),
+                        event_datetime=event_dt,
+                        event_url=event_url,
+                        min_price=float(min_price) if min_price else None,
+                        ticket_count=int(ticket_count) if ticket_count else None,
+                    )
+                    events.append(event)
+
+                except (KeyError, ValueError, TypeError) as e:
+                    logger.debug(f"Skipped event item: {e}")
+                    continue
+
+            total_pages = data.get("numberOfPages", 1)
+            logger.info(f"Page {page_num}/{total_pages}: collected {len(events)} events so far")
+
+            if page_num >= total_pages:
+                break
+
+            await self._delay_random()
+
+        logger.info(f"browse_concerts() returned {len(events)} events")
+        return events
+
     def _extract_events_from_production_list(
         self,
         page_props: dict[str, Any],
@@ -156,15 +308,13 @@ class VividSeatsScraper:
                 state = venue.get("state", "")
 
                 # Parse date
-                from datetime import datetime
-
                 local_date = item.get("localDate", "")
                 try:
                     # Format: 2026-08-01T12:55:00-04:00[America/New_York]
                     date_str = local_date.split("[")[0] if "[" in local_date else local_date
                     event_dt = datetime.fromisoformat(date_str)
                 except (ValueError, TypeError):
-                    event_dt = datetime.now()
+                    event_dt = datetime.now(UTC)
 
                 # Build URL
                 web_path = item.get("webPath", "")
@@ -187,7 +337,8 @@ class VividSeatsScraper:
                 )
                 events.append(event)
 
-            except (KeyError, ValueError, TypeError):
+            except (KeyError, ValueError, TypeError) as e:
+                logger.debug(f"Skipped event item: {e}")
                 continue
 
         return events
@@ -366,7 +517,8 @@ class VividSeatsScraper:
                 )
                 listings.append(listing)
 
-            except (KeyError, ValueError, TypeError):
+            except (KeyError, ValueError, TypeError) as e:
+                logger.debug(f"Skipped listing ticket: {e}")
                 continue
 
         return listings

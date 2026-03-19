@@ -50,8 +50,10 @@ def write_parquet(
     # Ensure parent directory exists
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write to Parquet
-    pq.write_table(table, path)
+    # Write to Parquet (crash-safe: write to tmp then rename)
+    tmp_path = path.with_suffix(".parquet.tmp")
+    pq.write_table(table, tmp_path)
+    tmp_path.rename(path)
 
     return len(data)
 
@@ -124,8 +126,10 @@ def append_parquet(
     # Ensure parent directory exists
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write combined data
-    pq.write_table(combined, path)
+    # Write combined data (crash-safe: write to tmp then rename)
+    tmp_path = path.with_suffix(".parquet.tmp")
+    pq.write_table(combined, tmp_path)
+    tmp_path.rename(path)
 
     return cast(int, combined.num_rows)
 

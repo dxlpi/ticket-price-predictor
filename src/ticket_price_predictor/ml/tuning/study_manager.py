@@ -113,6 +113,7 @@ class StudyManager:
         pipeline_kwargs: dict[str, Any] | None = None,
         use_cv: bool = False,
         n_cv_folds: int = 3,
+        search_space: str = "tuning",
     ) -> optuna.Study:
         """Run optimization with leak-free raw-data objective.
 
@@ -129,6 +130,7 @@ class StudyManager:
             pipeline_kwargs: Base kwargs for FeaturePipeline
             use_cv: Use TemporalGroupCV for more stable hyperparameter selection
             n_cv_folds: Number of CV folds when use_cv=True
+            search_space: Search space for model hyperparameters ("tuning" or "phase5")
         """
         study = self.create_study()
 
@@ -139,6 +141,7 @@ class StudyManager:
             penalize_dominance=penalize_dominance,
             use_cv=use_cv,
             n_cv_folds=n_cv_folds,
+            search_space=search_space,
         )
 
         print(f"Starting leak-free optimization: {self.study_name}")

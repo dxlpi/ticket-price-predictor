@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ticket_price_predictor.ml.features.artist_stats import ArtistStats, ArtistStatsCache
+from ticket_price_predictor.ml.features.artist_stats import ArtistStatsCache
 from ticket_price_predictor.ml.features.event import EventFeatureExtractor
 from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
 from ticket_price_predictor.ml.features.seating import SeatingFeatureExtractor
@@ -135,26 +135,6 @@ class TestArtistStatsCache:
         assert loaded.is_fitted
         assert loaded.artist_count == 1
         assert loaded.is_known_artist("Artist A")
-
-    def test_to_dict(self):
-        """Test ArtistStats.to_dict() method."""
-        stats = ArtistStats(
-            artist_name="Test",
-            avg_price=100.0,
-            median_price=90.0,
-            price_std=10.0,
-            event_count=5,
-            listing_count=50,
-            premium_ratio=0.3,
-        )
-
-        d = stats.to_dict()
-        assert d["artist_avg_price"] == 100.0
-        assert d["artist_median_price"] == 90.0
-        assert d["artist_price_std"] == 10.0
-        assert d["artist_event_count"] == 5.0
-        assert d["artist_listing_count"] == 50.0
-        assert d["artist_premium_ratio"] == 0.3
 
 
 # ============================================================================
@@ -503,22 +483,6 @@ class TestMomentumFeatureExtractor:
         assert len(result) == 3
         assert "price_momentum_7d" in result.columns
 
-    def test_compute_momentum_features(self):
-        """Test static method for computing momentum."""
-        df = pd.DataFrame(
-            {
-                "event_id": ["e1"] * 5,
-                "listing_price": [100.0, 105.0, 110.0, 108.0, 115.0],
-                "timestamp": pd.date_range("2024-01-01", periods=5, freq="D"),
-            }
-        )
-
-        result = MomentumFeatureExtractor.compute_momentum_features(df)
-
-        assert "price_momentum_7d" in result.columns
-        assert "price_vs_initial" in result.columns
-        assert "price_volatility" in result.columns
-
 
 # ============================================================================
 # FeaturePipeline Tests
@@ -613,15 +577,15 @@ class TestFeaturePipeline:
         pipeline_with_momentum = FeaturePipeline(include_momentum=True, include_snapshot=False)
 
         # No extras: performer(8) + event(9) + seating(6) + timeseries(6)
-        #   + regional(7) + popularity(7) + listing(4) + venue(4) + event_pricing(5)
-        #   + interactions(7) = 63
-        assert len(pipeline_no_extras.feature_names) == 63
+        #   + event_pricing(8) + relative_pricing(3) + regional(7) + popularity(7)
+        #   + listing(4) + venue(4) + interactions(7) = 69
+        assert len(pipeline_no_extras.feature_names) == 69
 
-        # With snapshot (default): 63 + 4 snapshot = 67
-        assert len(pipeline_with_snapshot.feature_names) == 67
+        # With snapshot (default): 69 + 4 snapshot = 73
+        assert len(pipeline_with_snapshot.feature_names) == 73
 
-        # With momentum (no snapshot): 63 + 4 momentum = 67
-        assert len(pipeline_with_momentum.feature_names) == 67
+        # With momentum (no snapshot): 69 + 4 momentum = 73
+        assert len(pipeline_with_momentum.feature_names) == 73
 
     def test_feature_count_without_new_extractors(self):
         """Test feature count when optional extractors are disabled."""
@@ -631,9 +595,9 @@ class TestFeaturePipeline:
             include_popularity=False,
             include_regional=False,
         )
-        # performer(8) + event(9) + seating(6) + timeseries(6) + listing(4) + venue(4)
-        #   + event_pricing(5) + interactions(7) = 49
-        assert len(pipeline.feature_names) == 49
+        # performer(8) + event(9) + seating(6) + timeseries(6) + event_pricing(8)
+        #   + relative_pricing(3) + listing(4) + venue(4) + interactions(7) = 55
+        assert len(pipeline.feature_names) == 55
 
 
 class TestEventPricingLOO:

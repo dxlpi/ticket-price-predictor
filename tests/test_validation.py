@@ -290,3 +290,69 @@ class TestBatchValidation:
         assert result.total_records == 2
         assert result.valid_records == 2
         assert result.is_valid
+
+
+class TestDataValidatorListings:
+    """Tests for DataValidator.validate_listing()."""
+
+    @pytest.fixture
+    def validator(self) -> DataValidator:
+        return DataValidator()
+
+    @pytest.fixture
+    def valid_listing(self):
+        from ticket_price_predictor.schemas import TicketListing
+
+        return TicketListing(
+            listing_id="L001",
+            event_id="E001",
+            source="vividseats",
+            timestamp=datetime.now(UTC),
+            event_name="Test Concert",
+            artist_or_team="Test Artist",
+            venue_name="Test Arena",
+            city="Los Angeles",
+            event_datetime=datetime.now(UTC) + timedelta(days=30),
+            section="Floor",
+            row="A",
+            quantity=2,
+            listing_price=150.0,
+            total_price=165.0,
+            days_to_event=30,
+        )
+
+    def test_valid_listing_passes(self, validator: DataValidator, valid_listing):
+        result = validator.validate_listing(valid_listing)
+        assert result.is_valid
+        assert len(result.errors) == 0
+
+    def test_zero_listing_price_is_invalid(self, validator: DataValidator, valid_listing):
+        listing = valid_listing.model_copy(update={"listing_price": 0.0})
+        result = validator.validate_listing(listing)
+        assert not result.is_valid
+        assert any("listing_price" in e for e in result.errors)
+
+    def test_negative_listing_price_is_invalid(self, validator: DataValidator, valid_listing):
+        listing = valid_listing.model_copy(update={"listing_price": -10.0})
+        result = validator.validate_listing(listing)
+        assert not result.is_valid
+        assert any("listing_price" in e for e in result.errors)
+
+    def test_zero_total_price_is_invalid(self, validator: DataValidator, valid_listing):
+        listing = valid_listing.model_copy(update={"total_price": 0.0})
+        result = validator.validate_listing(listing)
+        assert not result.is_valid
+        assert any("total_price" in e for e in result.errors)
+
+    def test_empty_event_id_is_invalid(self, validator: DataValidator, valid_listing):
+        listing = valid_listing.model_copy(update={"event_id": ""})
+        result = validator.validate_listing(listing)
+        assert not result.is_valid
+        assert any("event_id" in e for e in result.errors)
+
+    def test_days_to_event_zero_is_warning_not_error(self, validator: DataValidator, valid_listing):
+        listing = valid_listing.model_copy(update={"days_to_event": 0})
+        result = validator.validate_listing(listing)
+        assert result.is_valid
+        assert len(result.errors) == 0
+        assert any("days_to_event" in w for w in result.warnings)

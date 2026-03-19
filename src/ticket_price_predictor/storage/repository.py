@@ -281,6 +281,7 @@ class SnapshotRepository:
             price_max=data.get("price_max"),
             inventory_remaining=data.get("inventory_remaining"),
             days_to_event=data["days_to_event"],
+            source=data.get("source", "vividseats"),
         )
 
 
@@ -319,6 +320,7 @@ class ListingRepository:
             str(listing.seat_from or ""),
             str(listing.seat_to or ""),
             listing.source.lower().strip(),
+            f"{listing.listing_price:.2f}",  # Include price to preserve price change signal
         ]
         key_str = "|".join(key_parts)
         return hashlib.md5(key_str.encode()).hexdigest()
@@ -356,6 +358,28 @@ class ListingRepository:
         # Update cache
         if self._cached_hashes is not None:
             self._cached_hashes.update(new_hashes)
+
+        self._compact_hashes_if_needed()
+
+    def _compact_hashes_if_needed(self, threshold: int = 500_000) -> None:
+        """Compact hash file by deduplicating when cache exceeds threshold."""
+        if not self._dedup_hashes_file.exists():
+            return
+        if self._cached_hashes is not None and len(self._cached_hashes) <= threshold:
+            return
+        # Fallback: count lines if cache not populated
+        if self._cached_hashes is None:
+            with open(self._dedup_hashes_file) as _f:
+                line_count = sum(1 for _ in _f)
+            if line_count <= threshold:
+                return
+        unique = self._load_existing_hashes()
+        tmp = self._dedup_hashes_file.with_suffix(".tmp")
+        with open(tmp, "w") as f:
+            for h in unique:
+                f.write(h + "\n")
+        tmp.rename(self._dedup_hashes_file)
+        logger.info(f"Compacted hash file to {len(unique)} unique lines")
 
     def save_listings(self, listings: list[TicketListing], deduplicate: bool = True) -> int:
         """Save listings to storage, partitioned by date.

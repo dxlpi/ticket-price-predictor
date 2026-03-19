@@ -1,7 +1,6 @@
 """Time-based data splitting to avoid data leakage."""
 
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -207,46 +206,6 @@ class TimeBasedSplitter:
             if test_parts
             else pd.DataFrame(),
         )
-
-
-class GroupKFoldSplitter:
-    """K-fold cross-validation grouped by event_id."""
-
-    def __init__(
-        self,
-        n_splits: int = 5,
-        group_col: str = "event_id",
-    ) -> None:
-        """Initialize splitter.
-
-        Args:
-            n_splits: Number of folds
-            group_col: Column to group by
-        """
-        self._n_splits = n_splits
-        self._group_col = group_col
-
-    def split(
-        self,
-        X: pd.DataFrame,
-        y: pd.Series,
-        groups: pd.Series,
-    ) -> Any:
-        """Generate train/test indices for each fold.
-
-        Args:
-            X: Feature DataFrame
-            y: Target Series
-            groups: Group labels (e.g., event_id)
-
-        Yields:
-            Tuples of (train_indices, test_indices)
-        """
-        from sklearn.model_selection import GroupKFold
-
-        gkf = GroupKFold(n_splits=self._n_splits)
-
-        yield from gkf.split(X, y, groups)
 
 
 class TemporalGroupCV:

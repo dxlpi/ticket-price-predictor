@@ -16,6 +16,7 @@ def create_objective(
     split: DataSplit,
     search_space: str = "aggressive",
     penalize_dominance: bool = True,
+    dominance_threshold: float = 0.5,
 ) -> Any:
     """Factory to create objective function with data closure.
 
@@ -38,6 +39,8 @@ def create_objective(
             params = _sample_regularization_focus(trial)
         elif search_space == "full":
             params = _sample_full(trial)
+        elif search_space == "phase5":
+            params = _sample_phase5(trial)
         else:  # aggressive
             params = _sample_aggressive(trial)
 
@@ -75,8 +78,9 @@ def create_objective(
             objective_value = val_mae
 
             if penalize_dominance:
-                # Penalize if any feature exceeds 50% importance
-                dominance_penalty = max(0, max_importance - 0.5) * 100
+                # Quadratic penalty when any feature exceeds threshold importance
+                excess = max(0, max_importance - dominance_threshold)
+                dominance_penalty = excess**2 * 200
                 objective_value += dominance_penalty
                 trial.set_user_attr("dominance_penalty", dominance_penalty)
 
@@ -92,8 +96,9 @@ def create_objective(
 def _sample_conservative(trial: optuna.Trial) -> dict[str, Any]:
     """Conservative search space around current defaults."""
     return {
-        "objective": "regression",
-        "metric": ["rmse", "mae"],
+        "objective": "huber",
+        "alpha": 0.5,
+        "metric": ["mae", "rmse"],
         "boosting_type": "gbdt",
         "num_leaves": trial.suggest_categorical("num_leaves", [23, 31, 47]),
         "max_depth": trial.suggest_categorical("max_depth", [-1, 7, 10]),
@@ -113,8 +118,9 @@ def _sample_conservative(trial: optuna.Trial) -> dict[str, Any]:
 def _sample_aggressive(trial: optuna.Trial) -> dict[str, Any]:
     """Aggressive search space for exploration."""
     return {
-        "objective": "regression",
-        "metric": ["rmse", "mae"],
+        "objective": "huber",
+        "alpha": 0.5,
+        "metric": ["mae", "rmse"],
         "boosting_type": "gbdt",
         "num_leaves": trial.suggest_categorical("num_leaves", [15, 31, 63, 127, 255]),
         "max_depth": trial.suggest_categorical("max_depth", [-1, 5, 7, 10, 15]),
@@ -134,8 +140,9 @@ def _sample_aggressive(trial: optuna.Trial) -> dict[str, Any]:
 def _sample_regularization_focus(trial: optuna.Trial) -> dict[str, Any]:
     """Search space focused on combating feature dominance."""
     return {
-        "objective": "regression",
-        "metric": ["rmse", "mae"],
+        "objective": "huber",
+        "alpha": 0.5,
+        "metric": ["mae", "rmse"],
         "boosting_type": "gbdt",
         "num_leaves": trial.suggest_categorical("num_leaves", [31, 63]),
         "max_depth": trial.suggest_categorical("max_depth", [7, 10]),
@@ -206,6 +213,38 @@ def _sample_full(trial: optuna.Trial) -> dict[str, Any]:
     return params
 
 
+def _sample_phase5(trial: optuna.Trial) -> dict[str, Any]:
+    """Phase 5 search space: expanded parameters for deeper optimization.
+
+    Adds max_bin, path_smooth, min_gain_to_split, wider Huber alpha range,
+    lower learning rates with more trees, and reduced feature_fraction to
+    combat feature dominance.
+    """
+    return {
+        "objective": "huber",
+        "alpha": trial.suggest_float("huber_alpha", 0.3, 5.0),
+        "metric": ["mae", "rmse"],
+        "boosting_type": "gbdt",
+        "num_leaves": trial.suggest_int("num_leaves", 15, 127),
+        "max_depth": trial.suggest_categorical("max_depth", [-1, 5, 7, 10]),
+        "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.05, log=True),
+        "n_estimators": trial.suggest_int("n_estimators", 1000, 10000, step=500),
+        "feature_fraction": trial.suggest_float("feature_fraction", 0.3, 0.7),
+        "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 0.9),
+        "bagging_freq": trial.suggest_categorical("bagging_freq", [1, 5, 10]),
+        "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
+        "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 20.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 0.01, 20.0, log=True),
+        "max_bin": trial.suggest_categorical("max_bin", [63, 127, 255, 511]),
+        "path_smooth": trial.suggest_float("path_smooth", 0.0, 10.0),
+        "min_gain_to_split": trial.suggest_float("min_gain_to_split", 0.0, 1.0),
+        "early_stopping_rounds": trial.suggest_categorical(
+            "early_stopping_rounds", [200, 300, 500]
+        ),
+        "verbose": -1,
+    }
+
+
 def create_raw_objective(
     raw_split: RawDataSplit,
     target_col: str = "listing_price",
@@ -213,6 +252,7 @@ def create_raw_objective(
     penalize_dominance: bool = True,
     use_cv: bool = False,
     n_cv_folds: int = 3,
+    search_space: str = "tuning",
 ) -> Any:
     """Factory to create leak-free objective with dollar-space evaluation.
 
@@ -232,6 +272,9 @@ def create_raw_objective(
             hyperparameter selection. Each fold evaluates on fold.val_df (matching the
             single-split pattern). Falls back to single-split when <2 folds produced.
         n_cv_folds: Number of CV folds when use_cv=True (default 3)
+        search_space: Search space to use for model hyperparameters.
+            "tuning" (default): expanded Phase 4 space with DART/GBDT.
+            "phase5": Phase 5 space with max_bin, path_smooth, lower lr, GBDT+Huber only.
 
     Returns:
         Objective function for Optuna
@@ -295,8 +338,8 @@ def create_raw_objective(
     def objective(trial: optuna.Trial) -> float:
         """Objective: minimize dollar-space validation MAE."""
 
-        # Sample model hyperparameters
-        params = _sample_tuning(trial)
+        # Sample model hyperparameters based on search space
+        params = _sample_phase5(trial) if search_space == "phase5" else _sample_tuning(trial)
 
         # Sample smoothing factors for feature extractors
         extractor_params: dict[str, dict[str, Any]] = {}
@@ -373,7 +416,9 @@ def create_raw_objective(
             objective_value = val_mae
 
             if penalize_dominance:
-                dominance_penalty = max(0, max_importance - 0.5) * val_mae * 0.1
+                # Quadratic penalty when any feature exceeds 40% importance
+                excess = max(0, max_importance - 0.4)
+                dominance_penalty = excess**2 * val_mae * 0.5
                 objective_value += dominance_penalty
                 trial.set_user_attr("dominance_penalty", dominance_penalty)
 
@@ -391,28 +436,35 @@ def _sample_tuning(trial: optuna.Trial) -> dict[str, Any]:
 
     Uses MAE-first metric ordering for MAE-based early stopping.
     Guards against DART+Huber (catastrophic overfitting).
+    v33: expanded ranges — lower learning rate floor (0.005), more trees (up to 8000),
+    wider regularization, reduced feature_fraction, and additional parameters.
     """
     boosting_type = trial.suggest_categorical("boosting_type", ["gbdt", "dart"])
 
     if boosting_type == "dart":
         n_estimators = trial.suggest_categorical("dart_n_estimators", [1500, 2000, 2500])
     else:
-        n_estimators = trial.suggest_int("n_estimators", 500, 3000, step=100)
+        n_estimators = trial.suggest_int("n_estimators", 500, 8000, step=500)
 
     params: dict[str, Any] = {
         "objective": "regression",
         "metric": ["mae", "rmse"],
         "boosting_type": boosting_type,
-        "num_leaves": trial.suggest_int("num_leaves", 31, 127),
-        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
+        "num_leaves": trial.suggest_int("num_leaves", 15, 127),
+        "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.1, log=True),
         "n_estimators": n_estimators,
-        "feature_fraction": trial.suggest_float("feature_fraction", 0.4, 0.8),
+        "feature_fraction": trial.suggest_float("feature_fraction", 0.3, 0.8),
         "bagging_fraction": trial.suggest_float("bagging_fraction", 0.5, 0.9),
         "bagging_freq": trial.suggest_categorical("bagging_freq", [1, 5, 10]),
-        "min_child_samples": trial.suggest_int("min_child_samples", 10, 100),
-        "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 5.0, log=True),
-        "reg_lambda": trial.suggest_float("reg_lambda", 0.01, 5.0, log=True),
-        "early_stopping_rounds": 200,
+        "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
+        "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 20.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 0.01, 20.0, log=True),
+        "max_bin": trial.suggest_categorical("max_bin", [127, 255, 511]),
+        "path_smooth": trial.suggest_float("path_smooth", 0.0, 10.0),
+        "min_gain_to_split": trial.suggest_float("min_gain_to_split", 0.0, 0.5),
+        "early_stopping_rounds": trial.suggest_categorical(
+            "early_stopping_rounds", [200, 300, 500]
+        ),
         "verbose": -1,
     }
 
@@ -425,6 +477,6 @@ def _sample_tuning(trial: optuna.Trial) -> dict[str, Any]:
         use_huber = trial.suggest_categorical("use_huber", [True, False])
         if use_huber:
             params["objective"] = "huber"
-            params["alpha"] = trial.suggest_float("huber_alpha", 0.5, 2.0)
+            params["alpha"] = trial.suggest_float("huber_alpha", 0.3, 5.0)
 
     return params

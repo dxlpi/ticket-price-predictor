@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from ticket_price_predictor.schemas import EventMetadata, PriceSnapshot
+from ticket_price_predictor.schemas import EventMetadata, PriceSnapshot, TicketListing
 
 
 @dataclass
@@ -143,6 +143,35 @@ class DataValidator:
             errors=errors,
             warnings=warnings,
         )
+
+    def validate_listing(self, listing: TicketListing) -> ValidationResult:
+        """Validate a ticket listing record.
+
+        Args:
+            listing: Listing to validate
+
+        Returns:
+            ValidationResult with errors and warnings
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        if listing.listing_price <= 0:
+            errors.append(f"listing_price {listing.listing_price} is <= 0")
+
+        if listing.total_price <= 0:
+            errors.append(f"total_price {listing.total_price} is <= 0")
+
+        if not listing.event_id:
+            errors.append("event_id is empty")
+
+        if listing.days_to_event == 0:
+            warnings.append("days_to_event is 0 — may indicate defaulted event_datetime")
+
+        if not listing.section or listing.section == "Unknown":
+            warnings.append(f"section is '{listing.section}'")
+
+        return ValidationResult(is_valid=len(errors) == 0, errors=errors, warnings=warnings)
 
     def validate_events(self, events: list[EventMetadata]) -> BatchValidationResult:
         """Validate a batch of events.

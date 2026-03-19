@@ -99,7 +99,7 @@ The training pipeline prevents data leakage by:
 5. Transforming train/val/test independently
 6. Removing zero-variance features and log-transforming price-based features
 7. Log-transforming target (`np.log1p`) for better skewed-price handling
-8. Training LightGBM with DART boosting and early stopping (patience=200)
+8. Training LightGBM with GBDT boosting + Huber loss and early stopping (patience=100)
 
 ## Issue Tracking
 
@@ -111,13 +111,13 @@ When you encounter a major issue during any task (bugs with non-obvious root cau
 - Key deps: pydantic, pyarrow, lightgbm, scikit-learn, playwright
 - API keys in `.env`: `TICKETMASTER_API_KEY`, `LASTFM_API_KEY`
 
-## Current Model Performance (v30)
+## Current Model Performance (v32)
 
-- **MAE**: $133.86
-- **MAPE**: 40.0%
-- **R²**: 0.56
-- **RMSE**: $221.22
-- **Dataset**: 136 events, 42 artists (35,476 listings)
-- **Top features**: `event_section_median_price` (57.3%), `event_zone_median_price` (21.1%), `artist_regional_avg_price` (7.1%), `event_median_price` (6.8%), `artist_venue_price` (1.2%)
-- **Key improvements over v29-section**: artist_venue_price interaction feature (+1.2% importance), momentum disabled by default, snapshot infrastructure (pending data), 58 features after zero-variance removal. MAE improved $14.41 (9.7%), R² improved 0.46→0.56
-- **Feature pipeline**: 10 domains, 67 raw features (with snapshot) / 63 without snapshot; 58 active after zero-variance removal
+- **MAE**: $149.50
+- **MAPE**: 37.8%
+- **R²**: 0.5971
+- **RMSE**: $236.36
+- **Dataset**: 147 events, 43 artists (38,115 listings)
+- **Top features**: `event_section_median_price` (65.6%), `event_zone_median_price` (14.0%), `event_median_price` (8.8%), `artist_regional_avg_price` (2.6%), `event_zone_price_ratio` (2.3%)
+- **Key improvements over v30**: GBDT+Huber loss (robust to outliers), section feature enabled by default, GBDT converges in ~145 iterations vs DART's 2000 trees
+- **Feature pipeline**: 10 domains, 68 raw features (with snapshot) / 64 without snapshot; 62 active after zero-variance removal

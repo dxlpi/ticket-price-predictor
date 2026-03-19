@@ -4,6 +4,10 @@
 Collects seat-level pricing data from the most popular upcoming events.
 Designed to run hourly via cron or scheduler.
 
+Discovery uses two complementary strategies:
+1. Watchlist: search for specific artists by name (priority artists)
+2. Browse: discover concerts via the hermes productions API (diverse coverage)
+
 Usage:
     # One-time collection
     python scripts/monitor_popular.py
@@ -14,8 +18,10 @@ Usage:
 
 import asyncio
 import json
-from datetime import datetime
+import time
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -26,13 +32,26 @@ from ticket_price_predictor.storage import ListingRepository
 
 # Tier-based event allocation (events per artist per collection run)
 TIER_EVENT_LIMITS = {
-    "stadium": 5,
-    "arena": 3,
-    "theater": 2,
+    "stadium": 3,
+    "arena": 2,
+    "theater": 1,
     "emerging": 1,
 }
 
 WATCHLIST_PATH = Path("data/artist_watchlist.json")
+FESTIVAL_KEYWORDS_PATH = Path("data/festival_keywords.json")
+
+# Default festival keywords (used if config file not found)
+DEFAULT_FESTIVAL_KEYWORDS = [
+    "festival", "music fest", "season ticket", "day pass",
+    "3 day", "2 day", "weekend pass", "ga pass",
+    "bottlerock", "stagecoach", "tortuga", "coachella",
+    "lollapalooza", "bonnaroo", "two step inn", "cma fest",
+]
+
+# Safety limits
+MAX_CONSECUTIVE_FAILURES = 5
+TIME_BUDGET_SECONDS = 45 * 60  # 45 minutes
 
 
 def load_artist_watchlist(path: Path = WATCHLIST_PATH) -> dict[str, list[str]]:
@@ -55,17 +74,50 @@ def load_artist_watchlist(path: Path = WATCHLIST_PATH) -> dict[str, list[str]]:
     return {k: v for k, v in data.items() if not k.startswith("_")}
 
 
+def load_festival_keywords(path: Path = FESTIVAL_KEYWORDS_PATH) -> list[str]:
+    """Load festival/bundle keywords from config file.
+
+    Args:
+        path: Path to festival keywords JSON file
+
+    Returns:
+        List of keywords (lowercase)
+    """
+    if not path.exists():
+        return [k.lower() for k in DEFAULT_FESTIVAL_KEYWORDS]
+
+    with open(path) as f:
+        keywords = json.load(f)
+
+    return [k.lower() for k in keywords]
+
+
+def is_festival_or_bundle(event_name: str, keywords: list[str]) -> bool:
+    """Check if an event is a festival, season ticket, or multi-day pass.
+
+    Args:
+        event_name: Event name to check
+        keywords: List of lowercase keywords to match against
+
+    Returns:
+        True if the event matches any festival/bundle keyword
+    """
+    name_lower = event_name.lower()
+    return any(kw in name_lower for kw in keywords)
+
+
 async def get_popular_events(
-    max_events: int = 50,
+    max_events: int = 150,
     popularity_service: PopularityService | None = None,
-) -> list[dict]:
-    """Fetch top popular events from Vivid Seats using search.
+) -> list[dict[str, Any]]:
+    """Fetch popular events using watchlist searches + browse discovery.
 
-    Uses search_events() for each performer instead of navigating to
-    performer pages, which VividSeats manipulates for scrapers.
+    Two-phase discovery:
+    1. Search for each watchlist artist (priority coverage)
+    2. Browse concerts via hermes API (diverse coverage)
 
-    Artists are loaded from data/artist_watchlist.json organized by
-    popularity tier. Each tier has a different event allocation.
+    Events are deduplicated by ID and (venue, date) tuple.
+    Festival/bundle events are filtered out.
 
     Args:
         max_events: Maximum number of events to return
@@ -76,14 +128,14 @@ async def get_popular_events(
     """
     from ticket_price_predictor.scrapers import VividSeatsScraper
 
+    start_time = time.monotonic()
+    festival_keywords = load_festival_keywords()
+    consecutive_failures = 0
+
     print("Fetching popular performers and their events...")
 
     # Load artists from config file, organized by tier
     watchlist = load_artist_watchlist()
-
-    if not watchlist:
-        print("  No artists in watchlist!")
-        return []
 
     # Build flat performer list with tier-based event limits
     performer_configs: list[tuple[str, int]] = []
@@ -106,13 +158,62 @@ async def get_popular_events(
         ]
         print(f"  Re-ranked by popularity: {len(performer_configs)} performers")
 
-    events = []
+    events: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    seen_venue_dates: set[tuple[str, str]] = set()
 
-    # Use single browser session for all searches
+    def _add_event(event_dict: dict[str, Any]) -> bool:
+        """Add event if not a duplicate or festival. Returns True if added."""
+        event_id = event_dict.get("id", "")
+        venue = event_dict.get("venue", "")
+        event_dt = event_dict.get("event_datetime")
+        date_str = event_dt.isoformat()[:10] if event_dt else ""
+        venue_date_key = (venue.lower(), date_str)
+
+        # Dedup by ID
+        if event_id and event_id in seen_ids:
+            return False
+        # Dedup by (venue, date)
+        if venue and date_str and venue_date_key in seen_venue_dates:
+            return False
+        # Festival filter
+        if is_festival_or_bundle(event_dict.get("name", ""), festival_keywords):
+            return False
+
+        events.append(event_dict)
+        if event_id:
+            seen_ids.add(event_id)
+        if venue and date_str:
+            seen_venue_dates.add(venue_date_key)
+        return True
+
+    # === Phase 1: Watchlist searches ===
+    print("\n  Phase 1: Watchlist artist searches...")
     async with VividSeatsScraper(headless=True, delay_seconds=2.0) as scraper:
         for performer_name, events_to_collect in performer_configs:
             if len(events) >= max_events:
                 break
+
+            # Time budget check
+            elapsed = time.monotonic() - start_time
+            if elapsed > TIME_BUDGET_SECONDS:
+                print(f"  Time budget reached ({elapsed:.0f}s). Stopping watchlist search.")
+                break
+
+            # Circuit breaker
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                print(f"  Circuit breaker: {MAX_CONSECUTIVE_FAILURES} consecutive failures. Pausing 60s...")
+                await asyncio.sleep(60)
+                consecutive_failures = 0
+                # Try one more
+                try:
+                    test_events = await scraper.search_events(performer_name, max_results=1)
+                    if not test_events:
+                        print("  Circuit breaker: still failing after pause. Stopping watchlist search.")
+                        break
+                except Exception:
+                    print("  Circuit breaker: still failing after pause. Stopping watchlist search.")
+                    break
 
             try:
                 scraped_events = await scraper.search_events(
@@ -120,11 +221,11 @@ async def get_popular_events(
                     max_results=events_to_collect,
                 )
 
+                added = 0
                 for e in scraped_events:
                     if len(events) >= max_events:
                         break
-
-                    events.append({
+                    if _add_event({
                         "id": e.stubhub_event_id,
                         "name": e.event_name,
                         "url": e.event_url,
@@ -134,22 +235,70 @@ async def get_popular_events(
                         "ticket_count": e.ticket_count,
                         "performer": performer_name,
                         "event_datetime": e.event_datetime,
-                    })
+                    }):
+                        added += 1
 
-                print(f"  {performer_name}: {len(scraped_events)} events, added {min(len(scraped_events), events_to_collect)}")
+                if scraped_events:
+                    consecutive_failures = 0
+                    print(f"  {performer_name}: {len(scraped_events)} found, {added} added")
+                else:
+                    consecutive_failures += 1
 
             except Exception as e:
+                consecutive_failures += 1
                 print(f"  Error fetching {performer_name}: {e}")
 
+        # === Phase 2: Browse discovery (same browser session) ===
+        elapsed = time.monotonic() - start_time
+        remaining_budget = max_events - len(events)
+
+        if remaining_budget > 0 and elapsed < TIME_BUDGET_SECONDS:
+            print(f"\n  Phase 2: Browse concert discovery (budget: {remaining_budget} events)...")
+            consecutive_failures = 0
+
+            try:
+                browse_events = await scraper.browse_concerts(
+                    max_pages=10,
+                    max_events=remaining_budget + 50,  # fetch extra to account for dedup/filter losses
+                )
+
+                browse_added = 0
+                for evt in browse_events:
+                    if len(events) >= max_events:
+                        break
+                    if _add_event({
+                        "id": evt.stubhub_event_id,
+                        "name": evt.event_name,
+                        "url": evt.event_url,
+                        "venue": evt.venue_name,
+                        "city": evt.city,
+                        "min_price": evt.min_price,
+                        "ticket_count": evt.ticket_count,
+                        "performer": evt.artist_or_team,
+                        "event_datetime": evt.event_datetime,
+                    }):
+                        browse_added += 1
+
+                print(f"  Browse: {len(browse_events)} found, {browse_added} new after dedup/filter")
+
+            except Exception as browse_err:
+                print(f"  Browse discovery error: {browse_err}")
+        else:
+            if remaining_budget <= 0:
+                print("\n  Phase 2: Skipped (event budget full)")
+            else:
+                print(f"\n  Phase 2: Skipped (time budget: {elapsed:.0f}s)")
+
+    print(f"\n  Total events discovered: {len(events)} (dedup: {len(seen_ids)} IDs, {len(seen_venue_dates)} venue-dates)")
     return events[:max_events]
 
 
 def create_snapshots_from_listings(
-    listings: list,
+    listings: list[Any],
     event_id: str,
     timestamp: datetime,
     days_to_event: int,
-) -> list:
+) -> list[Any]:
     """Aggregate listings into zone-level price snapshots.
 
     Groups listings by normalized seat zone and computes
@@ -198,6 +347,7 @@ def create_snapshots_from_listings(
                 price_max=max(prices),
                 inventory_remaining=zone_quantities[zone_value],
                 days_to_event=max(0, days_to_event),
+                source="vividseats",
             )
         )
 
@@ -205,10 +355,11 @@ def create_snapshots_from_listings(
 
 
 async def collect_listings_for_events(
-    events: list[dict],
+    events: list[dict[str, Any]],
     data_dir: Path,
     max_listings_per_event: int = 100,
-) -> dict:
+    start_time: float | None = None,
+) -> dict[str, Any]:
     """Collect listings for a list of events and create price snapshots.
 
     Uses a SINGLE browser session for all events to avoid repeated
@@ -220,6 +371,7 @@ async def collect_listings_for_events(
         events: List of event dictionaries
         data_dir: Data storage directory
         max_listings_per_event: Max listings per event
+        start_time: Monotonic start time for wall-clock budget (optional)
 
     Returns:
         Summary statistics
@@ -234,17 +386,50 @@ async def collect_listings_for_events(
     snapshot_repo = SnapshotRepository(data_dir)
     timestamp = datetime.now(UTC)
 
-    stats = {
+    stats: dict[str, Any] = {
         "events_attempted": len(events),
         "events_succeeded": 0,
+        "events_skipped_time": 0,
         "total_listings": 0,
         "total_snapshots": 0,
+        "empty_responses": 0,
         "errors": [],
     }
+
+    consecutive_failures = 0
 
     # Use a SINGLE browser session for all events
     async with VividSeatsScraper(headless=True, delay_seconds=3.0) as scraper:
         for i, event in enumerate(events, 1):
+            # Wall-clock time guard
+            if start_time is not None:
+                elapsed = time.monotonic() - start_time
+                if elapsed > TIME_BUDGET_SECONDS:
+                    remaining = len(events) - i + 1
+                    stats["events_skipped_time"] = remaining
+                    print(f"\n  Time budget reached ({elapsed:.0f}s). Skipping {remaining} remaining events.")
+                    break
+
+            # Circuit breaker
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                print(f"\n  Circuit breaker: {MAX_CONSECUTIVE_FAILURES} consecutive failures. Pausing 60s...")
+                await asyncio.sleep(60)
+                consecutive_failures = 0
+
+                # Try one more event as a test
+                try:
+                    test = await scraper.get_event_listings(event["url"], max_listings=1)
+                    if not test:
+                        remaining = len(events) - i + 1
+                        print(f"  Circuit breaker: still failing. Aborting ({remaining} events skipped).")
+                        stats["events_skipped_time"] = remaining
+                        break
+                except Exception:
+                    remaining = len(events) - i + 1
+                    print(f"  Circuit breaker: still failing. Aborting ({remaining} events skipped).")
+                    stats["events_skipped_time"] = remaining
+                    break
+
             print(f"\n[{i}/{len(events)}] {event['name'][:50]}...")
 
             try:
@@ -255,6 +440,8 @@ async def collect_listings_for_events(
                 )
 
                 if scraped_listings:
+                    consecutive_failures = 0
+
                     # Create event object for conversion
                     scraped_event = ScrapedEvent(
                         stubhub_event_id=event.get("id", ""),
@@ -266,11 +453,17 @@ async def collect_listings_for_events(
                         event_url=event["url"],
                     )
 
-                    # Convert and save listings
-                    listings = [
-                        create_listing_from_scraped(s, scraped_event, timestamp)
-                        for s in scraped_listings
-                    ]
+                    # Convert and save listings (with validation)
+                    from ticket_price_predictor.validation.quality import DataValidator
+                    validator = DataValidator()
+                    listings = []
+                    for s in scraped_listings:
+                        listing = create_listing_from_scraped(s, scraped_event, timestamp)
+                        result = validator.validate_listing(listing)
+                        if result.is_valid:
+                            listings.append(listing)
+                        else:
+                            print(f"    Rejected invalid listing: {result.errors}")
                     saved = repository.save_listings(listings)
 
                     stats["events_succeeded"] += 1
@@ -291,9 +484,12 @@ async def collect_listings_for_events(
                     else:
                         print(f"    Found {len(scraped_listings)} listings (no price changes)")
                 else:
+                    consecutive_failures += 1
+                    stats["empty_responses"] += 1
                     print("    No listings found")
 
             except Exception as e:
+                consecutive_failures += 1
                 error_msg = f"{event['name']}: {e}"
                 stats["errors"].append(error_msg)
                 print(f"    Error: {e}")
@@ -314,11 +510,12 @@ async def main() -> None:
     parser.add_argument(
         "--max-events",
         type=int,
-        default=100,
-        help="Maximum events to collect (default: 100)",
+        default=150,
+        help="Maximum events to collect (default: 150)",
     )
     args = parser.parse_args()
 
+    run_start = time.monotonic()
     data_dir = Path("data")
     max_listings_per_event = 100
 
@@ -331,9 +528,10 @@ async def main() -> None:
     print("=" * 60)
     print(f"POPULAR EVENTS MONITOR [{mode}]")
     print("=" * 60)
-    print(f"Timestamp: {datetime.now().isoformat()}")
+    print(f"Timestamp: {datetime.now(UTC).isoformat()}")
     print(f"Max events: {max_events}")
     print(f"Max listings per event: {max_listings_per_event}")
+    print(f"Time budget: {TIME_BUDGET_SECONDS // 60} minutes")
     print()
 
     # Get popular events with popularity-based ranking
@@ -343,7 +541,7 @@ async def main() -> None:
     )
     # Filter to near-term events if --urgent
     if args.urgent:
-        from datetime import UTC, timedelta
+        from datetime import timedelta
 
         cutoff = datetime.now(UTC) + timedelta(days=14)
         before_count = len(events)
@@ -372,16 +570,21 @@ async def main() -> None:
         events=events,
         data_dir=data_dir,
         max_listings_per_event=max_listings_per_event,
+        start_time=run_start,
     )
 
     # Summary
+    elapsed_total = time.monotonic() - run_start
     print("\n" + "=" * 60)
     print("COLLECTION SUMMARY")
     print("=" * 60)
     print(f"Events attempted: {stats['events_attempted']}")
     print(f"Events succeeded: {stats['events_succeeded']}")
+    print(f"Events skipped (time): {stats.get('events_skipped_time', 0)}")
     print(f"Total listings collected: {stats['total_listings']}")
     print(f"Total snapshots saved: {stats.get('total_snapshots', 0)}")
+    print(f"Empty responses: {stats.get('empty_responses', 0)}")
+    print(f"Total time: {elapsed_total:.0f}s ({elapsed_total / 60:.1f} min)")
 
     if stats["errors"]:
         print(f"\nErrors ({len(stats['errors'])}):")
@@ -402,7 +605,7 @@ async def main() -> None:
     print(f"Total events being monitored: {len(event_ids)}")
     print(f"Total listings in database: {len(all_listings)}")
 
-    print(f"\nCompleted at: {datetime.now().isoformat()}")
+    print(f"\nCompleted at: {datetime.now(UTC).isoformat()}")
 
 
 if __name__ == "__main__":

@@ -47,8 +47,8 @@ def main() -> None:
         "--search-space",
         type=str,
         default="aggressive",
-        choices=["conservative", "aggressive", "regularization_focus", "full"],
-        help="Search space for legacy mode (default: aggressive)",
+        choices=["conservative", "aggressive", "regularization_focus", "full", "phase5"],
+        help="Search space (default: aggressive). phase5 adds max_bin, path_smooth, min_gain_to_split",
     )
     parser.add_argument(
         "--resume",
@@ -192,6 +192,7 @@ def main() -> None:
             pipeline_kwargs={"include_listing": False},
             use_cv=args.cv_tuning,
             n_cv_folds=args.cv_folds,
+            search_space=args.search_space,
         )
 
     # Save trial metadata for all trials

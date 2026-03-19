@@ -422,29 +422,52 @@ class TestModelComparison:
 
 
 # ============================================================================
-# LightGBM GBDT + Huber Loss Tests
+# LightGBM Default Params Tests
 # ============================================================================
 
 
-class TestLightGBMHuber:
-    """Tests for LightGBM GBDT + Huber loss configuration."""
+class TestLightGBMDefaults:
+    """Tests for LightGBM default params (DART) and GBDT+Huber."""
 
-    def test_gbdt_params_objective_is_huber(self):
+    def test_default_params_is_dart(self):
+        """DEFAULT_PARAMS uses DART boosting."""
+        assert LightGBMModel.DEFAULT_PARAMS["boosting_type"] == "dart"
+
+    def test_gbdt_params_is_huber(self):
         """GBDT_PARAMS uses Huber loss objective."""
         assert LightGBMModel.GBDT_PARAMS["objective"] == "huber"
-
-    def test_gbdt_params_boosting_is_gbdt(self):
-        """GBDT_PARAMS uses GBDT boosting (DART is incompatible with Huber)."""
         assert LightGBMModel.GBDT_PARAMS["boosting_type"] == "gbdt"
 
-    def test_dart_params_deleted(self):
-        """DART_PARAMS must not exist — DART+Huber causes catastrophic overfitting."""
-        assert not hasattr(LightGBMModel, "DART_PARAMS"), (
-            "DART_PARAMS should be deleted — DART+Huber causes catastrophic overfitting"
+    def test_dart_default_never_uses_huber(self):
+        """DART+Huber causes catastrophic overfitting — DEFAULT must not use Huber."""
+        assert LightGBMModel.DEFAULT_PARAMS["objective"] != "huber", (
+            "DART+Huber causes catastrophic overfitting — must use regression/l2"
         )
 
-    def test_gbdt_huber_trains_and_predicts(self):
-        """LightGBM with GBDT_PARAMS trains and produces finite predictions."""
+    def test_default_params_trains_and_predicts(self):
+        """LightGBM with DEFAULT_PARAMS (Huber) trains and produces finite predictions."""
+        np.random.seed(42)
+        n = 100
+        X = pd.DataFrame(
+            {
+                "feature1": np.random.randn(n),
+                "feature2": np.random.randn(n),
+            }
+        )
+        y = pd.Series(100 + 20 * X["feature1"] + np.random.randn(n) * 5)
+
+        params = dict(LightGBMModel.DEFAULT_PARAMS)
+        params["n_estimators"] = 100  # fast for tests
+
+        model = LightGBMModel(params=params)
+        model.fit(X[:80], y[:80], X[80:], y[80:])
+
+        preds = model.predict(X[80:])
+        assert len(preds) == 20
+        assert all(np.isfinite(p) for p in preds)
+
+    def test_gbdt_params_trains(self):
+        """GBDT_PARAMS still trains and produces finite predictions."""
         np.random.seed(42)
         n = 100
         X = pd.DataFrame(
@@ -456,7 +479,7 @@ class TestLightGBMHuber:
         y = pd.Series(100 + 20 * X["feature1"] + np.random.randn(n) * 5)
 
         params = dict(LightGBMModel.GBDT_PARAMS)
-        params["n_estimators"] = 100  # fast for tests
+        params["n_estimators"] = 50  # fast for tests
 
         model = LightGBMModel(params=params)
         model.fit(X[:80], y[:80], X[80:], y[80:])

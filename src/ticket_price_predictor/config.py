@@ -171,7 +171,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
 
     # Collection settings
-    snapshot_interval_hours: int = 12
+    snapshot_interval_hours: int = 8
 
     @property
     def raw_data_dir(self) -> Path:

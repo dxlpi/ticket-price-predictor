@@ -31,20 +31,42 @@ class LightGBMModel(PriceModel):
         - "quantile": Quantile regression (use QuantileLightGBMModel)
     """
 
-    # Default params: DART + MSE. DART's dropout provides implicit regularization
-    # but does NOT support early stopping — all n_estimators trees are built.
-    # Huber loss is incompatible with DART (causes catastrophic overfitting);
-    # use GBDT_PARAMS for Huber experiments.
+    # Default params: GBDT + Huber loss. Huber is robust to outliers (Q4 MAE -17%
+    # vs L2). Uses early stopping — best_iteration determines final tree count.
+    # v33: lr=0.01, num_leaves=31, feature_fraction=0.5 for smoother gradient descent,
+    # reduced feature dominance (57% → less concentrated), and stronger regularization.
+    # Ablation vs v32 defaults on same dataset: MAE -4.2%, R2 +4.4%, MAPE -2.4pp.
     DEFAULT_PARAMS = {
+        "objective": "huber",
+        "alpha": 1.0,
+        "metric": ["mae", "rmse"],
+        "boosting_type": "gbdt",
+        "num_leaves": 31,
+        "learning_rate": 0.01,
+        "feature_fraction": 0.5,
+        "bagging_fraction": 0.7,
+        "bagging_freq": 5,
+        "min_child_samples": 30,
+        "reg_alpha": 1.0,
+        "reg_lambda": 1.0,
+        "verbose": -1,
+        "n_estimators": 8000,
+        "early_stopping_rounds": 500,
+        "max_bin": 127,
+        "path_smooth": 2.0,
+    }
+
+    # Legacy DART + L2 config. DART's dropout provides implicit regularization
+    # but does NOT support early stopping — all n_estimators trees are built.
+    # Use via --loss l2 CLI flag. NEVER combine DART with Huber loss.
+    DART_PARAMS = {
         "objective": "regression",
         "metric": ["mae", "rmse"],
         "boosting_type": "dart",
         "num_leaves": 63,
         "learning_rate": 0.03,
-        # DART-specific dropout regularization
         "drop_rate": 0.1,
         "skip_drop": 0.5,
-        # Feature/data sampling
         "feature_fraction": 0.6,
         "bagging_fraction": 0.7,
         "bagging_freq": 5,
@@ -53,27 +75,6 @@ class LightGBMModel(PriceModel):
         "reg_lambda": 0.3,
         "verbose": -1,
         "n_estimators": 2000,
-        "early_stopping_rounds": 200,
-    }
-
-    # GBDT + Huber loss: use via --loss huber CLI flag.
-    # DART + Huber causes catastrophic overfitting; never combine them.
-    GBDT_PARAMS = {
-        "objective": "huber",
-        "alpha": 0.5,
-        "metric": ["mae", "rmse"],
-        "boosting_type": "gbdt",
-        "num_leaves": 63,
-        "learning_rate": 0.05,
-        "feature_fraction": 0.7,
-        "bagging_fraction": 0.8,
-        "bagging_freq": 5,
-        "min_child_samples": 20,
-        "reg_alpha": 0.1,
-        "reg_lambda": 0.5,
-        "verbose": -1,
-        "n_estimators": 3000,
-        "early_stopping_rounds": 100,
     }
 
     def __init__(
@@ -197,8 +198,11 @@ class LightGBMModel(PriceModel):
 
         return self._model.predict(X, num_iteration=self._best_iteration)  # type: ignore[return-value]
 
-    def get_feature_importance(self) -> dict[str, float]:
+    def get_feature_importance(self, top_k: int | None = None) -> dict[str, float]:
         """Get feature importance scores.
+
+        Args:
+            top_k: If set, return only top K features. None returns all.
 
         Returns:
             Dictionary mapping feature names to importance scores
@@ -216,8 +220,12 @@ class LightGBMModel(PriceModel):
 
         result = dict(zip(feature_names, importance, strict=False))
 
-        # Sort by importance
-        return dict(sorted(result.items(), key=lambda x: -x[1])[:20])
+        # Sort by importance descending
+        sorted_result = dict(sorted(result.items(), key=lambda x: -x[1]))
+
+        if top_k is not None:
+            return dict(list(sorted_result.items())[:top_k])
+        return sorted_result
 
     def save(self, path: Path) -> None:
         """Save model to disk.
@@ -291,8 +299,7 @@ class QuantileLightGBMModel(PriceModel):
         """
         base_params = LightGBMModel.DEFAULT_PARAMS.copy()
         base_params.update(params or {})
-        # Force quantile objective — overrides any "huber" from DEFAULT_PARAMS.
-        # alpha is also overridden per quantile in fit(), so DEFAULT_PARAMS alpha is irrelevant.
+        base_params.pop("alpha", None)  # Remove Huber alpha; quantile sets its own
         base_params["objective"] = "quantile"
 
         self._base_params = base_params

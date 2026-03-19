@@ -216,3 +216,132 @@ class TestSnapshotRepository:
         # Check partition path exists
         partition_path = temp_data_dir / "raw" / "snapshots" / "year=2026" / "month=03"
         assert partition_path.exists()
+
+
+class TestListingRepositoryDedupHash:
+    """Tests for compute_listing_hash() dedup hash redesign."""
+
+    def _make_listing(self, price: float):
+        from ticket_price_predictor.schemas import TicketListing
+
+        return TicketListing(
+            listing_id="l1",
+            event_id="e1",
+            source="vividseats",
+            timestamp=datetime.now(UTC),
+            event_name="Test Show",
+            artist_or_team="Artist",
+            venue_name="Venue",
+            city="LA",
+            event_datetime=datetime.now(UTC) + timedelta(days=30),
+            section="Floor A",
+            row="1",
+            seat_from="1",
+            seat_to="2",
+            quantity=2,
+            listing_price=price,
+            total_price=price * 2,
+            days_to_event=30,
+        )
+
+    def test_same_price_same_hash(self):
+        """Same seat at same price produces same hash."""
+        from ticket_price_predictor.storage.repository import ListingRepository
+
+        l1 = self._make_listing(100.0)
+        l2 = self._make_listing(100.0)
+        assert ListingRepository.compute_listing_hash(l1) == ListingRepository.compute_listing_hash(
+            l2
+        )
+
+    def test_different_price_different_hash(self):
+        """Same seat at different price produces different hash (preserves price change signal)."""
+        from ticket_price_predictor.storage.repository import ListingRepository
+
+        l1 = self._make_listing(100.0)
+        l2 = self._make_listing(150.0)
+        assert ListingRepository.compute_listing_hash(l1) != ListingRepository.compute_listing_hash(
+            l2
+        )
+
+
+class TestAtomicParquetWrite:
+    """Tests for crash-safe parquet writes."""
+
+    def test_no_tmp_file_after_write_parquet(self, tmp_path: Path, sample_event: EventMetadata):
+        """write_parquet leaves no .parquet.tmp after successful write."""
+        path = tmp_path / "events.parquet"
+        write_parquet([sample_event], path, EventMetadata.parquet_schema())
+        assert not path.with_suffix(".parquet.tmp").exists()
+        assert path.exists()
+
+    def test_no_tmp_file_after_append_parquet(self, tmp_path: Path, sample_event: EventMetadata):
+        """append_parquet leaves no .parquet.tmp after successful write."""
+        from ticket_price_predictor.storage.parquet import append_parquet
+
+        path = tmp_path / "events.parquet"
+        append_parquet([sample_event], path, EventMetadata.parquet_schema())
+        assert not path.with_suffix(".parquet.tmp").exists()
+        assert path.exists()
+
+
+class TestSnapshotProvenance:
+    """Tests for PriceSnapshot source provenance field."""
+
+    def test_snapshot_default_source(self):
+        """PriceSnapshot defaults to vividseats source."""
+        s = PriceSnapshot(
+            event_id="e1",
+            seat_zone=SeatZone.FLOOR_VIP,
+            timestamp=datetime.now(UTC),
+            price_min=100.0,
+            days_to_event=30,
+        )
+        assert s.source == "vividseats"
+
+    def test_snapshot_ticketmaster_source(self):
+        """PriceSnapshot accepts ticketmaster source."""
+        s = PriceSnapshot(
+            event_id="e1",
+            seat_zone=SeatZone.FLOOR_VIP,
+            timestamp=datetime.now(UTC),
+            price_min=100.0,
+            days_to_event=30,
+            source="ticketmaster",
+        )
+        assert s.source == "ticketmaster"
+
+    def test_snapshot_roundtrip_source(self, temp_data_dir: Path):
+        """PriceSnapshot source field survives save/load roundtrip."""
+        repo = SnapshotRepository(temp_data_dir)
+        s = PriceSnapshot(
+            event_id="e1",
+            seat_zone=SeatZone.LOWER_TIER,
+            timestamp=datetime.now(UTC),
+            price_min=100.0,
+            days_to_event=30,
+            source="ticketmaster",
+        )
+        repo.save_snapshots([s])
+        loaded = repo.get_snapshots(event_id="e1")
+        assert len(loaded) == 1
+        assert loaded[0].source == "ticketmaster"
+
+    def test_snapshot_backward_compat_missing_source(self):
+        """PriceSnapshot deserialized from dict without source defaults to vividseats."""
+        from ticket_price_predictor.storage.repository import SnapshotRepository
+
+        data = {
+            "event_id": "e1",
+            "seat_zone": "lower_tier",
+            "timestamp": datetime.now(UTC),
+            "price_min": 100.0,
+            "price_avg": None,
+            "price_max": None,
+            "inventory_remaining": None,
+            "days_to_event": 30,
+            # source intentionally missing
+        }
+        repo = SnapshotRepository(Path("/tmp"))
+        snapshot = repo._dict_to_snapshot(data)
+        assert snapshot.source == "vividseats"

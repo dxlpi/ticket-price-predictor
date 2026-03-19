@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        choices=["baseline", "lightgbm", "quantile"],
+        choices=["baseline", "lightgbm", "quantile", "xgboost", "catboost", "stacking", "residual"],
         default="lightgbm",
         help="Model type to train (default: lightgbm)",
     )
@@ -106,9 +106,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sample-weight",
         type=str,
-        choices=["none", "inverse_artist_freq", "recency"],
+        choices=["none", "inverse_artist_freq", "sqrt_price", "log_price", "inverse_price_quartile"],
         default="none",
         help="Sample weighting strategy (default: none)",
+    )
+
+    parser.add_argument(
+        "--outlier-strategy",
+        type=str,
+        choices=["global_p95", "zone_winsorize", "none"],
+        default="global_p95",
+        help="Outlier handling strategy (default: global_p95)",
+    )
+
+    parser.add_argument(
+        "--target-transform",
+        type=str,
+        choices=["log", "boxcox", "sqrt"],
+        default="log",
+        help="Target transform strategy (default: log)",
     )
 
     parser.add_argument(
@@ -118,9 +134,9 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--section-feature",
+        "--no-section-feature",
         action="store_true",
-        help="Enable experimental section-level pricing feature",
+        help="Disable section-level pricing feature (enabled by default)",
     )
 
     parser.add_argument(
@@ -133,8 +149,8 @@ def parse_args() -> argparse.Namespace:
         "--loss",
         type=str,
         choices=["l2", "huber"],
-        default="l2",
-        help="Loss function: l2 (default, DART+MSE) or huber (GBDT+Huber, robust to outliers)",
+        default=None,
+        help="Override loss: l2 uses legacy DART+MSE. Default (omitted): GBDT+Huber",
     )
 
     return parser.parse_args()
@@ -156,13 +172,15 @@ def main() -> None:
 
     # Select base params from loss flag (before Optuna study overrides)
     params = None
-    if args.loss == "huber" and args.model == "lightgbm":
-        params = dict(LightGBMModel.GBDT_PARAMS)
-        print(f"Loss: huber (GBDT+Huber, alpha={params['alpha']})")
+    if args.loss == "l2" and args.model == "lightgbm":
+        params = dict(LightGBMModel.DART_PARAMS)
+        print("Loss: l2 (legacy DART+MSE)")
+    elif args.loss == "huber" and args.model == "lightgbm":
+        print("Loss: huber (already default, no override needed)")
     else:
-        if args.loss == "huber" and args.model != "lightgbm":
-            print(f"WARNING: --loss huber only applies to lightgbm model, ignoring for {args.model}")
-        print("Loss: l2 (default DART+MSE)")
+        if args.loss is not None and args.model != "lightgbm":
+            print(f"WARNING: --loss only applies to lightgbm model, ignoring for {args.model}")
+        print("Loss: huber (default GBDT+Huber)")
 
     # Load hyperparameters from Optuna study if specified (overrides --loss params)
     if args.from_study:
@@ -194,13 +212,16 @@ def main() -> None:
         smoothing = {k: raw_params.pop(k) for k in pipeline_smoothing_keys if k in raw_params}
 
         # Handle meta params (use_huber → objective/alpha, dart_n_estimators → n_estimators)
-        use_huber = raw_params.pop("use_huber", False)
-        if use_huber:
+        use_huber = raw_params.pop("use_huber", None)
+        huber_alpha = raw_params.pop("huber_alpha", None)
+        if use_huber is True:
+            # _sample_tuning path: use_huber boolean controls objective
             raw_params["objective"] = "huber"
-            huber_alpha = raw_params.pop("huber_alpha", 1.0)
+            raw_params["alpha"] = huber_alpha or 1.0
+        elif use_huber is None and huber_alpha is not None:
+            # _sample_phase5 path: always Huber, huber_alpha is the alpha value
+            raw_params["objective"] = "huber"
             raw_params["alpha"] = huber_alpha
-        else:
-            raw_params.pop("huber_alpha", None)
 
         dart_n_est = raw_params.pop("dart_n_estimators", None)
         if dart_n_est is not None and raw_params.get("boosting_type") == "dart":
@@ -238,11 +259,11 @@ def main() -> None:
     study_pipeline_kwargs: dict[str, Any] | None = None
     if args.no_listing:
         study_pipeline_kwargs = {"include_listing": False}
-    if args.section_feature:
+    if args.no_section_feature:
         if study_pipeline_kwargs is None:
             study_pipeline_kwargs = {}
         ep_params = study_pipeline_kwargs.setdefault("extractor_params", {})
-        ep_params.setdefault("EventPricingFeatureExtractor", {})["include_section_feature"] = True
+        ep_params.setdefault("EventPricingFeatureExtractor", {})["include_section_feature"] = False
     if args.no_snapshot:
         if study_pipeline_kwargs is None:
             study_pipeline_kwargs = {}
@@ -261,10 +282,12 @@ def main() -> None:
             extractor_params["RegionalPopularityFeatureExtractor"] = {
                 "regional_smoothing": smoothing["regional_smoothing"],
             }
-        study_pipeline_kwargs = {
-            "extractor_params": extractor_params,
-            "include_listing": False,
-        }
+        if study_pipeline_kwargs is None:
+            study_pipeline_kwargs = {}
+        existing_ep = study_pipeline_kwargs.get("extractor_params", {})
+        existing_ep.update(extractor_params)
+        study_pipeline_kwargs["extractor_params"] = existing_ep
+        study_pipeline_kwargs.setdefault("include_listing", False)
 
     # Train model
     trainer = ModelTrainer(
@@ -328,6 +351,9 @@ def main() -> None:
             popularity_service=popularity_service,
             pipeline_kwargs=study_pipeline_kwargs,
             snapshot_df=snapshot_df,
+            sample_weight_strategy=args.sample_weight,
+            outlier_strategy=args.outlier_strategy,
+            target_transform=args.target_transform,
         )
 
     # Save model

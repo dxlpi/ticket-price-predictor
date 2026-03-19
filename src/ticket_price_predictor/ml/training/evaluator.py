@@ -1,7 +1,9 @@
 """Model evaluation utilities."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
@@ -9,6 +11,9 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from ticket_price_predictor.ml.models.base import PriceModel
 from ticket_price_predictor.ml.schemas import TrainingMetrics
+
+if TYPE_CHECKING:
+    from ticket_price_predictor.ml.training.target_transforms import TargetTransform
 
 
 class ModelEvaluator:
@@ -77,31 +82,6 @@ class ModelEvaluator:
         }
 
     @staticmethod
-    def compute_direction_accuracy(
-        y_true: npt.NDArray[Any],
-        y_pred: npt.NDArray[Any],
-        y_prev: npt.NDArray[Any] | None = None,
-    ) -> float:
-        """Compute accuracy of direction predictions.
-
-        Args:
-            y_true: True values
-            y_pred: Predicted values
-            y_prev: Previous values (for computing actual direction)
-
-        Returns:
-            Direction accuracy (0-1)
-        """
-        if y_prev is None:
-            # Assume comparing against mean
-            y_prev = np.full_like(y_true, np.mean(y_true))
-
-        true_direction = np.sign(y_true - y_prev)
-        pred_direction = np.sign(y_pred - y_prev)
-
-        return float(np.mean(true_direction == pred_direction))
-
-    @staticmethod
     def evaluate_model(
         model: PriceModel,
         X_test: npt.NDArray[Any],
@@ -111,6 +91,7 @@ class ModelEvaluator:
         training_time: float = 0.0,
         model_version: str = "v1",
         log_target: bool = False,
+        target_transform: TargetTransform | None = None,
         zones: npt.NDArray[Any] | None = None,
     ) -> TrainingMetrics:
         """Full model evaluation.
@@ -118,12 +99,14 @@ class ModelEvaluator:
         Args:
             model: Trained model
             X_test: Test features
-            y_test: Test target (raw scale when log_target=True)
+            y_test: Test target (raw scale when log_target=True or target_transform set)
             n_train: Number of training samples
             n_val: Number of validation samples
             training_time: Training time in seconds
             model_version: Model version string
             log_target: If True, inverse-transform predictions from log-space
+            target_transform: Optional fitted TargetTransform for inverse-transforming
+                predictions. Takes precedence over log_target when set.
             zones: Optional zone label array for per-zone MAE breakdown
 
         Returns:
@@ -131,7 +114,10 @@ class ModelEvaluator:
         """
         y_pred = model.predict(X_test)
 
-        if log_target:
+        if target_transform is not None:
+            # Use the fitted transform's inverse
+            y_pred = target_transform.inverse_transform(y_pred)
+        elif log_target:
             # Model predicts in log-space; inverse-transform to raw prices
             y_pred = np.expm1(y_pred)
             # Clip negative predictions (can occur from expm1 on small values)

@@ -68,8 +68,11 @@ Thumbs.db
 .claude/settings.local.json
 SUMMARY.md
 
+# Personal / career docs
+docs/portfolio.md
+
 # Deploy scripts with instance-specific secrets (IPs, key paths)
-deploy/deploy-to-ec2.sh
+deploy/
 
 # Coral (device-local files)
 .claude/coral/*

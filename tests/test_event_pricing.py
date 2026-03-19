@@ -35,11 +35,19 @@ class TestFeatureNames:
             "event_listing_count",
             "event_price_cv",
             "event_zone_price_ratio",
+            "event_section_median_price",
+            "event_price_iqr",
+            "event_price_skewness",
         ]
 
     def test_feature_names_count(self) -> None:
         extractor = EventPricingFeatureExtractor()
-        assert len(extractor.feature_names) == 5
+        assert len(extractor.feature_names) == 8
+
+    def test_feature_names_without_section(self) -> None:
+        extractor = EventPricingFeatureExtractor(include_section_feature=False)
+        assert len(extractor.feature_names) == 7
+        assert "event_section_median_price" not in extractor.feature_names
 
 
 class TestFitStats:
@@ -118,7 +126,7 @@ class TestExtract:
         extractor = EventPricingFeatureExtractor()
         extractor.fit(df)
         result = extractor.extract(df)
-        assert result.shape == (3, 5)
+        assert result.shape == (3, 8)
 
     def test_extract_column_names(self) -> None:
         df = _make_df(["e1", "e1"], [100.0, 200.0])
@@ -179,6 +187,75 @@ class TestExtract:
         extractor.fit(df)
         result = extractor.extract(df)
         assert not result.isnull().any().any()
+
+
+class TestDistributionFeatures:
+    """Test distribution shape features (IQR, skewness, range_ratio)."""
+
+    def test_iqr_computed_for_event(self) -> None:
+        df = _make_df(
+            event_ids=["e1", "e1", "e1", "e1"],
+            prices=[100.0, 200.0, 300.0, 400.0],
+        )
+        extractor = EventPricingFeatureExtractor()
+        extractor.fit(df)
+        result = extractor.extract(df)
+        # IQR = Q75 - Q25 = 325 - 175 = 150
+        assert result["event_price_iqr"].iloc[0] == 150.0
+
+    def test_skewness_clamped(self) -> None:
+        df = _make_df(
+            event_ids=["e1", "e1", "e1", "e1"],
+            prices=[100.0, 200.0, 300.0, 400.0],
+        )
+        extractor = EventPricingFeatureExtractor()
+        extractor.fit(df)
+        result = extractor.extract(df)
+        assert result["event_price_skewness"].iloc[0] >= -3.0
+        assert result["event_price_skewness"].iloc[0] <= 3.0
+
+    def test_zone_range_ratio_positive(self) -> None:
+        df = _make_df(
+            event_ids=["e1", "e1", "e1", "e1"],
+            prices=[100.0, 200.0, 300.0, 400.0],
+            sections=["Floor A", "Floor A", "Section 401", "Section 401"],
+        )
+        extractor = EventPricingFeatureExtractor()
+        extractor.fit(df)
+        result = extractor.extract(df)
+        assert (result["event_price_iqr"] >= 0.0).all()
+
+    def test_distribution_fallback_for_small_events(self) -> None:
+        """Events with < 3 listings fall back to global distribution stats."""
+        df = _make_df(
+            event_ids=["e1", "e1", "e2", "e2", "e2", "e2"],
+            prices=[100.0, 200.0, 50.0, 100.0, 150.0, 200.0],
+        )
+        extractor = EventPricingFeatureExtractor()
+        extractor.fit(df)
+        result = extractor.extract(df)
+        # e1 has only 2 listings (< 3) → uses global IQR
+        # e2 has 4 listings → uses event-specific IQR
+        # Both should be non-NaN
+        assert not result["event_price_iqr"].isnull().any()
+        assert not result["event_price_skewness"].isnull().any()
+
+    def test_distribution_no_nan(self) -> None:
+        df = _make_df(
+            event_ids=["e1", "e1", "e2"],
+            prices=[100.0, 200.0, 300.0],
+            sections=["Floor", "Section 101", "Section 401"],
+            artists=["Artist A", "Artist A", "Artist B"],
+        )
+        extractor = EventPricingFeatureExtractor()
+        extractor.fit(df)
+        result = extractor.extract(df)
+        assert (
+            not result[["event_price_iqr", "event_price_skewness"]]
+            .isnull()
+            .any()
+            .any()
+        )
 
 
 class TestFallbackChain:
@@ -272,15 +349,15 @@ class TestMissingColumns:
 
     def test_missing_section_column(self) -> None:
         df = _make_df(["e1", "e1"], [100.0, 200.0])
-        extractor = EventPricingFeatureExtractor()
+        extractor = EventPricingFeatureExtractor(include_section_feature=False)
         extractor.fit(df)
         result = extractor.extract(df)
-        assert result.shape == (2, 5)
+        assert result.shape == (2, 7)
         assert not result.isnull().any().any()
 
     def test_missing_artist_column(self) -> None:
         df = _make_df(["e1", "e1"], [100.0, 200.0])
-        extractor = EventPricingFeatureExtractor()
+        extractor = EventPricingFeatureExtractor(include_section_feature=False)
         extractor.fit(df)
         # Extract with no artist_or_team column
         test_df = pd.DataFrame(
@@ -290,7 +367,7 @@ class TestMissingColumns:
             }
         )
         result = extractor.extract(test_df)
-        assert result.shape == (2, 5)
+        assert result.shape == (2, 7)
         assert not result.isnull().any().any()
 
     def test_nan_section_values(self) -> None:
@@ -301,16 +378,16 @@ class TestMissingColumns:
                 "section": [None, "Floor A"],
             }
         )
-        extractor = EventPricingFeatureExtractor()
+        extractor = EventPricingFeatureExtractor(include_section_feature=False)
         extractor.fit(df)
         result = extractor.extract(df)
-        assert result.shape == (2, 5)
+        assert result.shape == (2, 7)
         assert not result.isnull().any().any()
 
     def test_empty_dataframe_extract(self) -> None:
         train_df = _make_df(["e1", "e1"], [100.0, 200.0])
-        extractor = EventPricingFeatureExtractor()
+        extractor = EventPricingFeatureExtractor(include_section_feature=False)
         extractor.fit(train_df)
         empty_df = pd.DataFrame({"event_id": [], "listing_price": []})
         result = extractor.extract(empty_df)
-        assert result.shape == (0, 5)
+        assert result.shape == (0, 7)

@@ -1,6 +1,5 @@
 """Feature pipeline orchestration."""
 
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -12,14 +11,13 @@ from ticket_price_predictor.ml.features.event_pricing import EventPricingFeature
 from ticket_price_predictor.ml.features.performer import PerformerFeatureExtractor
 from ticket_price_predictor.ml.features.popularity import PopularityFeatureExtractor
 from ticket_price_predictor.ml.features.regional import RegionalPopularityFeatureExtractor
+from ticket_price_predictor.ml.features.relative_pricing import RelativePricingFeatureExtractor
 from ticket_price_predictor.ml.features.seating import SeatingFeatureExtractor
 from ticket_price_predictor.ml.features.snapshot import SnapshotFeatureExtractor
 from ticket_price_predictor.ml.features.timeseries import (
     MomentumFeatureExtractor,
     TimeSeriesFeatureExtractor,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class FeaturePipeline:
@@ -39,6 +37,7 @@ class FeaturePipeline:
         include_venue: bool = True,
         include_interactions: bool = True,
         include_event_pricing: bool = True,
+        include_relative_pricing: bool = True,
         popularity_service: Any | None = None,
         extractor_params: dict[str, dict[str, Any]] | None = None,
     ) -> None:
@@ -54,6 +53,8 @@ class FeaturePipeline:
             include_venue: Whether to include venue features
             include_interactions: Whether to include interaction features (post-extraction)
             include_event_pricing: Whether to include event-level pricing features
+            include_relative_pricing: Whether to include relative pricing features
+                (section/zone deviations, hierarchical residuals)
             popularity_service: PopularityService instance for API-based features
             extractor_params: Per-extractor parameter overrides, keyed by extractor class
                 name. Values are dicts of attribute name → value applied via setattr after
@@ -73,8 +74,11 @@ class FeaturePipeline:
             if extractor_params and "EventPricingFeatureExtractor" in extractor_params:
                 ep_init = extractor_params["EventPricingFeatureExtractor"]
                 if "include_section_feature" in ep_init:
-                    ep_kwargs["include_section_feature"] = ep_init.pop("include_section_feature")
+                    ep_kwargs["include_section_feature"] = ep_init["include_section_feature"]
             self._extractors.append(EventPricingFeatureExtractor(**ep_kwargs))
+
+        if include_relative_pricing:
+            self._extractors.append(RelativePricingFeatureExtractor())
 
         if include_momentum:
             self._extractors.append(MomentumFeatureExtractor())
@@ -88,29 +92,19 @@ class FeaturePipeline:
         if include_popularity:
             self._extractors.append(PopularityFeatureExtractor(popularity_service))
 
-        # Optional listing context extractor (lazy import)
         if include_listing:
-            try:
-                from ticket_price_predictor.ml.features.listing import (
-                    ListingContextFeatureExtractor,
-                )
+            from ticket_price_predictor.ml.features.listing import (
+                ListingContextFeatureExtractor,
+            )
 
-                self._extractors.append(ListingContextFeatureExtractor())
-            except ImportError:
-                logger.warning(
-                    "ListingContextFeatureExtractor not available; skipping listing features"
-                )
+            self._extractors.append(ListingContextFeatureExtractor())
 
-        # Optional venue extractor (lazy import)
         if include_venue:
-            try:
-                from ticket_price_predictor.ml.features.venue import (
-                    VenueFeatureExtractor,
-                )
+            from ticket_price_predictor.ml.features.venue import (
+                VenueFeatureExtractor,
+            )
 
-                self._extractors.append(VenueFeatureExtractor())
-            except ImportError:
-                logger.warning("VenueFeatureExtractor not available; skipping venue features")
+            self._extractors.append(VenueFeatureExtractor())
 
         # Apply per-extractor parameter overrides (e.g. smoothing factors).
         # Keys must match extractor class names in self._extractors, not nested cache names.
@@ -119,22 +113,22 @@ class FeaturePipeline:
                 cls_name = type(extractor).__name__
                 if cls_name in extractor_params:
                     for key, value in extractor_params[cls_name].items():
+                        if (
+                            cls_name == "EventPricingFeatureExtractor"
+                            and key == "include_section_feature"
+                        ):
+                            continue  # Already handled via constructor
                         setattr(extractor, key, value)
 
         # Post-extractors operate on concatenated base features
         self._post_extractors: list[FeatureExtractor] = []
 
         if include_interactions:
-            try:
-                from ticket_price_predictor.ml.features.interactions import (
-                    InteractionFeatureExtractor,
-                )
+            from ticket_price_predictor.ml.features.interactions import (
+                InteractionFeatureExtractor,
+            )
 
-                self._post_extractors.append(InteractionFeatureExtractor())
-            except ImportError:
-                logger.warning(
-                    "InteractionFeatureExtractor not available; skipping interaction features"
-                )
+            self._post_extractors.append(InteractionFeatureExtractor())
 
         self._fitted = False
 

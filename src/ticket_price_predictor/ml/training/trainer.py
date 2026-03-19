@@ -2,6 +2,7 @@
 
 import json
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -11,18 +12,43 @@ import pandas as pd
 from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
 from ticket_price_predictor.ml.models.base import PriceModel
 from ticket_price_predictor.ml.models.baseline import BaselineModel
+from ticket_price_predictor.ml.models.catboost_model import CatBoostModel
 from ticket_price_predictor.ml.models.lightgbm_model import LightGBMModel, QuantileLightGBMModel
+from ticket_price_predictor.ml.models.residual import ResidualModel
+from ticket_price_predictor.ml.models.stacking import StackingEnsemble
+from ticket_price_predictor.ml.models.xgboost_model import XGBoostModel
 from ticket_price_predictor.ml.schemas import TrainingMetrics
 from ticket_price_predictor.ml.training.evaluator import ModelEvaluator
 from ticket_price_predictor.ml.training.splitter import DataSplit, TimeBasedSplitter
+from ticket_price_predictor.ml.training.target_transforms import (
+    TargetTransform,
+    create_target_transform,
+)
 
-ModelType = Literal["baseline", "lightgbm", "quantile"]
+ModelType = Literal[
+    "baseline", "lightgbm", "quantile", "xgboost", "catboost", "stacking", "residual"
+]
+
+OutlierStrategy = Literal["global_p95", "zone_winsorize", "none"]
+
+SampleWeightStrategy = Literal[
+    "none", "inverse_artist_freq", "sqrt_price", "log_price", "inverse_price_quartile"
+]
 
 # Suffixes that indicate scale-independent derived statistics.
 # Columns with these suffixes are excluded from log-transformation even when
 # their name contains "price", "avg", or "median", because log-transforming
 # std/cv/ratio/count values is statistically inappropriate.
-_LOG_EXCLUDE_SUFFIXES = ("_std", "_cv", "_ratio", "_count", "_change", "_rate")
+_LOG_EXCLUDE_SUFFIXES = (
+    "_std",
+    "_cv",
+    "_ratio",
+    "_count",
+    "_change",
+    "_rate",
+    "_skewness",
+    "_deviation",
+)
 
 
 def _join_snapshot_features(
@@ -206,6 +232,7 @@ class ModelTrainer:
         self._feature_pipeline: FeaturePipeline | None = None
         self._metrics: TrainingMetrics | None = None
         self._log_transformed_cols: list[str] = []
+        self._target_transform: TargetTransform | None = None
 
     @property
     def model(self) -> PriceModel | None:
@@ -229,6 +256,14 @@ class ModelTrainer:
             return LightGBMModel(params=params) if params else LightGBMModel()
         elif self._model_type == "quantile":
             return QuantileLightGBMModel(params=params) if params else QuantileLightGBMModel()
+        elif self._model_type == "xgboost":
+            return XGBoostModel(params=params) if params else XGBoostModel()
+        elif self._model_type == "catboost":
+            return CatBoostModel(params=params) if params else CatBoostModel()
+        elif self._model_type == "stacking":
+            return StackingEnsemble()
+        elif self._model_type == "residual":
+            return ResidualModel()
         else:
             raise ValueError(f"Unknown model type: {self._model_type}")
 
@@ -242,8 +277,10 @@ class ModelTrainer:
         params: dict[str, Any] | None = None,
         popularity_service: Any | None = None,
         pipeline_kwargs: dict[str, Any] | None = None,
-        sample_weight_strategy: Literal["none", "inverse_artist_freq"] = "none",
+        sample_weight_strategy: SampleWeightStrategy = "none",
         snapshot_df: pd.DataFrame | None = None,
+        outlier_strategy: OutlierStrategy = "global_p95",
+        target_transform: str = "log",
     ) -> TrainingMetrics:
         """Train model on data.
 
@@ -264,9 +301,21 @@ class ModelTrainer:
                 "none" (default): uniform weights.
                 "inverse_artist_freq": weight = 1/count_per_artist, normalized
                 so that weights sum to n_train.
+                "sqrt_price": weight = sqrt(price/median_price), upweights expensive tickets.
+                "log_price": weight = log1p(price)/mean(log1p(prices)), moderate upweight.
+                "inverse_price_quartile": weight by inverse quartile frequency so each
+                price quartile contributes equally to the loss.
             snapshot_df: Optional raw snapshot DataFrame from DataLoader.load_snapshots().
                 When provided, temporal delta features are joined to each split
                 independently AFTER split_raw() to prevent leakage.
+            outlier_strategy: How to handle price outliers before splitting.
+                "global_p95" (default): global 95th percentile cap (backward-compatible).
+                "zone_winsorize": per-zone Winsorization at (p2, p98) with fallback.
+                "none": no outlier capping.
+            target_transform: Target transform strategy.
+                "log" (default): np.log1p/np.expm1 (backward-compatible).
+                "boxcox": scipy Box-Cox with fitted lambda.
+                "sqrt": square root transform (gentler compression).
 
         Returns:
             Training metrics
@@ -281,7 +330,14 @@ class ModelTrainer:
 
         # Filter obviously invalid prices and cap outliers
         df = self._filter_invalid_prices(df)
-        df = self._cap_price_outliers(df)
+        if outlier_strategy == "global_p95":
+            df = self._cap_price_outliers(df)
+        elif outlier_strategy == "zone_winsorize":
+            df = self._winsorize_by_zone(df)
+        elif outlier_strategy == "none":
+            print("Outlier capping: disabled")
+        else:
+            raise ValueError(f"Unknown outlier_strategy: {outlier_strategy!r}")
 
         # Normalize city names for consistent grouping
         if "city" in df.columns:
@@ -378,9 +434,14 @@ class ModelTrainer:
                 X_val[c] = np.log1p(X_val[c].clip(lower=0))
                 X_test[c] = np.log1p(X_test[c].clip(lower=0))
 
-        # Log-transform target for better handling of skewed price distribution
-        y_train = np.log1p(train_df[self._target_col].values)
-        y_val = np.log1p(val_df[self._target_col].values)
+        # Transform target for better handling of skewed price distribution
+        tt = create_target_transform(target_transform)
+        tt.fit(train_df[self._target_col].values)
+        self._target_transform = tt
+        print(f"Target transform: {tt.name}")
+
+        y_train = tt.transform(train_df[self._target_col].values)
+        y_val = tt.transform(val_df[self._target_col].values)
         y_test_raw = test_df[self._target_col].values  # keep raw for evaluation
 
         print(f"Feature shape: {X_train.shape}")
@@ -405,6 +466,53 @@ class ModelTrainer:
                     "WARNING: sample_weight_strategy='inverse_artist_freq' requested "
                     "but 'artist_or_team' column not found — using uniform weights"
                 )
+        elif sample_weight_strategy == "sqrt_price":
+            prices = train_df[self._target_col].values.astype(float)
+            median_price = np.median(prices)
+            raw_weights = np.sqrt(prices / max(median_price, 1.0))
+            # Normalize so weights sum to n_train
+            sample_weight = raw_weights / raw_weights.sum() * len(raw_weights)
+            print(
+                f"Sample weights: sqrt_price "
+                f"(min={sample_weight.min():.3f}, max={sample_weight.max():.3f})"
+            )
+        elif sample_weight_strategy == "log_price":
+            prices = train_df[self._target_col].values.astype(float)
+            log_prices = np.log1p(prices)
+            mean_log = np.mean(log_prices)
+            raw_weights = log_prices / max(mean_log, 1e-6)
+            # Normalize so weights sum to n_train
+            sample_weight = raw_weights / raw_weights.sum() * len(raw_weights)
+            print(
+                f"Sample weights: log_price "
+                f"(min={sample_weight.min():.3f}, max={sample_weight.max():.3f})"
+            )
+        elif sample_weight_strategy == "inverse_price_quartile":
+            prices = train_df[self._target_col].values.astype(float)
+            q25, q50, q75 = np.percentile(prices, [25, 50, 75])
+            # Assign quartile labels
+            quartiles = np.where(
+                prices <= q25,
+                1,
+                np.where(prices <= q50, 2, np.where(prices <= q75, 3, 4)),
+            )
+            # Weight = 1 / count_in_quartile, so each quartile contributes equally
+            unique, counts = np.unique(quartiles, return_counts=True)
+            quartile_counts = dict(zip(unique, counts, strict=False))
+            raw_weights = np.array([1.0 / quartile_counts[q] for q in quartiles])
+            # Normalize so weights sum to n_train
+            sample_weight = raw_weights / raw_weights.sum() * len(raw_weights)
+            # Cap max weight ratio at 4:1 to avoid extreme imbalance
+            max_ratio = sample_weight.max() / max(sample_weight.min(), 1e-10)
+            if max_ratio > 4.0:
+                sample_weight = np.clip(
+                    sample_weight, sample_weight.min(), sample_weight.min() * 4.0
+                )
+                sample_weight = sample_weight / sample_weight.sum() * len(sample_weight)
+            print(
+                f"Sample weights: inverse_price_quartile "
+                f"(min={sample_weight.min():.3f}, max={sample_weight.max():.3f})"
+            )
 
         # Train model
         print("Training model...")
@@ -438,13 +546,33 @@ class ModelTrainer:
         best_iter = getattr(self._model, "best_iteration", None)
         if best_iter is not None and best_iter == 0:
             boosting = (params or {}).get(
-                "boosting_type", LightGBMModel.DEFAULT_PARAMS.get("boosting_type", "dart")
+                "boosting_type", LightGBMModel.DEFAULT_PARAMS.get("boosting_type", "gbdt")
             )
             if boosting != "dart":
                 print(
                     f"WARNING: best_iteration=0 with boosting_type={boosting!r}. "
                     "Early stopping fired at round 0 — check learning_rate and early_stopping_rounds."
                 )
+
+        if len(y_test_raw) == 0:
+            print("No test set (test_ratio=0.0) — skipping evaluation")
+            self._metrics = TrainingMetrics(
+                model_version=self._model_version,
+                model_type=self._model_type,
+                trained_at=datetime.now(UTC),
+                n_train_samples=len(X_train),
+                n_val_samples=len(X_val),
+                n_test_samples=0,
+                n_features=X_train.shape[1],
+                training_time_seconds=training_time,
+                mae=0.0,
+                rmse=0.0,
+                mape=0.0,
+                r2=0.0,
+                feature_importance=self._model.get_feature_importance(),
+                best_iteration=getattr(self._model, "best_iteration", None),
+            )
+            return self._metrics
 
         # Derive zone labels for per-zone evaluation breakdown
         test_zones = None
@@ -468,7 +596,8 @@ class ModelTrainer:
             n_val=len(X_val),
             training_time=training_time,
             model_version=self._model_version,
-            log_target=True,
+            log_target=(target_transform == "log"),
+            target_transform=tt if target_transform != "log" else None,
             zones=test_zones,
         )
 
@@ -504,34 +633,6 @@ class ModelTrainer:
             df.loc[changed, "artist_or_team"] = mapped[changed]
             n = changed.sum()
             print(f"Normalized {n} artist aliases ({len(aliases)} rules)")
-        return df
-
-    @staticmethod
-    def _deduplicate_listings(df: pd.DataFrame) -> pd.DataFrame:
-        """Remove duplicate listings, keeping the latest timestamp per unique listing.
-
-        Deduplication is based on the combination of event, section, row, and price.
-        When a timestamp column is available, the most recent entry is kept.
-
-        Args:
-            df: Input DataFrame
-
-        Returns:
-            DataFrame with duplicates removed
-        """
-        dedup_cols = ["event_id", "section", "row", "listing_price"]
-        available_cols = [c for c in dedup_cols if c in df.columns]
-
-        if len(available_cols) < 2:
-            return df
-
-        before = len(df)
-        if "timestamp" in df.columns:
-            df = df.sort_values("timestamp", ascending=False)
-        df = df.drop_duplicates(subset=available_cols, keep="first")
-        removed = before - len(df)
-        if removed > 0:
-            print(f"Removed {removed} duplicate listings ({removed / before * 100:.1f}%)")
         return df
 
     @staticmethod
@@ -589,14 +690,96 @@ class ModelTrainer:
         print(f"Price outlier cap at ${cap:.2f} (p{percentile:.0f})")
         return df
 
+    @staticmethod
+    def _winsorize_by_zone(
+        df: pd.DataFrame,
+        target_col: str = "listing_price",
+        lower_pct: float = 2.0,
+        upper_pct: float = 98.0,
+        min_zone_samples: int = 20,
+    ) -> pd.DataFrame:
+        """Apply zone-aware Winsorization to cap outliers per seat zone.
+
+        Groups listings by normalized seat zone and clips prices at
+        (lower_pct, upper_pct) percentiles per zone. Zones with fewer
+        than min_zone_samples listings fall back to global (p5, p95).
+
+        Args:
+            df: Input DataFrame with section and target columns
+            target_col: Price column to Winsorize
+            lower_pct: Lower percentile for clipping (default 2.0)
+            upper_pct: Upper percentile for clipping (default 98.0)
+            min_zone_samples: Minimum samples per zone before falling back to global
+
+        Returns:
+            DataFrame with Winsorized prices
+        """
+        if target_col not in df.columns:
+            return df
+
+        df = df.copy()
+        df[target_col] = df[target_col].astype(float)
+
+        # Compute global fallback caps
+        global_lower = float(df[target_col].quantile(5.0 / 100.0))
+        global_upper = float(df[target_col].quantile(95.0 / 100.0))
+
+        # Derive normalized zone from section if available
+        if "section" in df.columns:
+            from ticket_price_predictor.normalization.seat_zones import SeatZoneMapper
+
+            mapper = SeatZoneMapper()
+            df["_winsorize_zone"] = df["section"].apply(
+                lambda s: mapper.normalize_zone_name(str(s)).value
+            )
+        else:
+            # No section column — use global caps
+            print(
+                f"Zone Winsorization: no 'section' column, using global p{lower_pct:.0f}/p{upper_pct:.0f}"
+            )
+            lower_cap = float(df[target_col].quantile(lower_pct / 100.0))
+            upper_cap = float(df[target_col].quantile(upper_pct / 100.0))
+            before_clipped = ((df[target_col] < lower_cap) | (df[target_col] > upper_cap)).sum()
+            df[target_col] = df[target_col].clip(lower=lower_cap, upper=upper_cap)
+            print(f"  Global caps: ${lower_cap:.2f} - ${upper_cap:.2f} ({before_clipped} clipped)")
+            return df
+
+        total_clipped = 0
+        for zone, group_idx in df.groupby("_winsorize_zone").groups.items():
+            zone_prices = df.loc[group_idx, target_col]
+
+            if len(zone_prices) < min_zone_samples:
+                # Fall back to global caps for small zones
+                lower_cap = global_lower
+                upper_cap = global_upper
+                source = "global fallback"
+            else:
+                lower_cap = float(zone_prices.quantile(lower_pct / 100.0))
+                upper_cap = float(zone_prices.quantile(upper_pct / 100.0))
+                source = f"p{lower_pct:.0f}/p{upper_pct:.0f}"
+
+            clipped = ((zone_prices < lower_cap) | (zone_prices > upper_cap)).sum()
+            total_clipped += clipped
+            df.loc[group_idx, target_col] = zone_prices.clip(lower=lower_cap, upper=upper_cap)
+            print(
+                f"  Zone {zone}: ${lower_cap:.2f} - ${upper_cap:.2f} "
+                f"({source}, {len(zone_prices)} samples, {clipped} clipped)"
+            )
+
+        df = df.drop(columns=["_winsorize_zone"])
+        print(f"Zone Winsorization: {total_clipped} total values clipped")
+        return df
+
     def train_with_split(
         self,
         split: DataSplit,
+        log_target: bool = False,
     ) -> TrainingMetrics:
         """Train model with pre-computed split.
 
         Args:
             split: DataSplit object
+            log_target: If True, inverse-transform predictions from log-space before evaluation.
 
         Returns:
             Training metrics
@@ -624,6 +807,7 @@ class ModelTrainer:
             n_val=split.n_val,
             training_time=training_time,
             model_version=self._model_version,
+            log_target=log_target,
         )
 
         ModelEvaluator.print_metrics(self._metrics)
@@ -634,12 +818,14 @@ class ModelTrainer:
         self,
         split: DataSplit,
         params: dict[str, Any],
+        log_target: bool = False,
     ) -> TrainingMetrics:
         """Train model with custom hyperparameters.
 
         Args:
             split: DataSplit object
             params: Hyperparameter dictionary
+            log_target: If True, inverse-transform predictions from log-space before evaluation.
 
         Returns:
             Training metrics
@@ -667,6 +853,7 @@ class ModelTrainer:
             n_val=split.n_val,
             training_time=training_time,
             model_version=self._model_version,
+            log_target=log_target,
         )
 
         ModelEvaluator.print_metrics(self._metrics)
@@ -699,11 +886,26 @@ class ModelTrainer:
             self._feature_pipeline.save(pipeline_path)
             print(f"Pipeline saved to: {pipeline_path}")
 
-        # Save log-transformed column list (needed to replicate transforms at inference)
+        # Save log-transformed column list and target transform info
+        meta: dict[str, Any] = {}
         if self._log_transformed_cols:
+            meta["log_transformed_cols"] = self._log_transformed_cols
+        if self._target_transform is not None:
+            meta["target_transform"] = self._target_transform.name
+        if meta:
             meta_path = output_dir / f"{self._model_type}_{self._model_version}_meta.json"
-            meta_path.write_text(json.dumps({"log_transformed_cols": self._log_transformed_cols}))
+            meta_path.write_text(json.dumps(meta))
             print(f"Meta saved to: {meta_path}")
+
+        # Save target transform object for inference
+        if self._target_transform is not None:
+            import joblib
+
+            tt_path = (
+                output_dir / f"{self._model_type}_{self._model_version}_target_transform.joblib"
+            )
+            joblib.dump(self._target_transform, tt_path)
+            print(f"Target transform saved to: {tt_path}")
 
         # Save metrics
         if self._metrics:
@@ -754,6 +956,49 @@ class ModelTrainer:
 
         return result.data
 
+    @staticmethod
+    def prune_features_by_importance(
+        X_train: pd.DataFrame,
+        X_val: pd.DataFrame,
+        X_test: pd.DataFrame,
+        importance: dict[str, float],
+        threshold: float = 0.001,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+        """Remove features below importance threshold.
+
+        After initial training, prunes low-importance features to reduce noise
+        and improve generalization on small datasets.
+
+        Args:
+            X_train: Training features
+            X_val: Validation features
+            X_test: Test features
+            importance: Feature importance dict (normalized, values sum to ~1.0)
+            threshold: Minimum importance to keep (default 0.1%)
+
+        Returns:
+            Tuple of (X_train, X_val, X_test, removed_features)
+        """
+        features_to_remove = []
+        for f in X_train.columns:
+            imp = importance.get(f, 0.0)
+            if imp < threshold:
+                features_to_remove.append(f)
+
+        if features_to_remove:
+            print(
+                f"Pruning {len(features_to_remove)} features "
+                f"below {threshold * 100:.1f}% importance"
+            )
+            X_train = X_train.drop(columns=features_to_remove)
+            X_val = X_val.drop(columns=features_to_remove)
+            X_test = X_test.drop(columns=features_to_remove)
+            print(f"  Remaining features: {X_train.shape[1]}")
+        else:
+            print("No features below importance threshold — skipping pruning")
+
+        return X_train, X_val, X_test, features_to_remove
+
     @classmethod
     def load(cls, model_path: Path, model_type: ModelType) -> PriceModel:
         """Load a trained model.
@@ -771,5 +1016,13 @@ class ModelTrainer:
             return LightGBMModel.load(model_path)
         elif model_type == "quantile":
             return QuantileLightGBMModel.load(model_path)
+        elif model_type == "xgboost":
+            return XGBoostModel.load(model_path)
+        elif model_type == "catboost":
+            return CatBoostModel.load(model_path)
+        elif model_type == "stacking":
+            return StackingEnsemble.load(model_path)
+        elif model_type == "residual":
+            return ResidualModel.load(model_path)
         else:
             raise ValueError(f"Unknown model type: {model_type}")

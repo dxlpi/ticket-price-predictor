@@ -2,7 +2,7 @@
 
 ## System Overview
 
-ML system for predicting secondary-market (resale) ticket prices at the seat-zone level. Ingests event metadata from Ticketmaster, scrapes actual resale prices from VividSeats/StubHub, enriches with popularity data from YouTube Music and Last.fm, and trains a LightGBM model with 67 raw features across 10 extractor domains (listing domain disabled; snapshot domain enabled by default).
+ML system for predicting secondary-market (resale) ticket prices at the seat-zone level. Ingests event metadata from Ticketmaster, scrapes actual resale prices from VividSeats/StubHub, enriches with popularity data from YouTube Music and Last.fm, and trains a LightGBM model with 67 raw features across 10 extractor domains (listing domain disabled; snapshot domain enabled by default). Default boosting: GBDT+Huber loss.
 
 ## Layer Diagram
 
@@ -65,7 +65,7 @@ ML system for predicting secondary-market (resale) ticket prices at the seat-zon
                     v
    +----------------+--------------------------------------+
    | ml/                                                    |
-   |  features/    (9 domain extractors, 59 features)       |
+   |  features/    (10 domain extractors, 63+ features)      |
    |  models/      (Ridge baseline, LightGBM, Quantile)     |
    |  training/    (split-first, leak-free pipeline)         |
    |  tuning/      (Optuna hyperparameter search)            |
@@ -111,12 +111,12 @@ Code flows top-to-bottom. Each layer may only depend on layers above it:
 6. Fit `FeaturePipeline` on training split only (two-stage: base extractors → post-extractors)
 7. Transform train/val/test independently
 8. Remove zero-variance features, log-transform price-based features
-9. Log-transform target (`np.log1p`), train LightGBM with DART boosting
+9. Log-transform target (`np.log1p`), train LightGBM with GBDT+Huber loss and early stopping
 10. Evaluate on raw scale (`np.expm1` inverse transform)
 
 ## Model Versioning
 
-Models stored as `data/models/lightgbm_v{N}.joblib` + `lightgbm_v{N}_metrics.json` pairs. No formal registry — version tracked by filename convention. Current production: v28.
+Models stored as `data/models/lightgbm_v{N}.joblib` + `lightgbm_v{N}_metrics.json` pairs. No formal registry — version tracked by filename convention. Current production: v32.
 
 ## Inference Architecture
 
@@ -159,7 +159,7 @@ Scheduling: EC2 t3.micro systemd timer runs hourly via `scripts/monitor_popular.
 | File | Purpose | Why It Matters |
 |------|---------|----------------|
 | `ml/training/trainer.py` | `ModelTrainer.train()` — orchestrates leak-free training | Central pipeline; split-before-fit invariant lives here |
-| `ml/features/pipeline.py` | `FeaturePipeline` — two-stage feature extraction | All 9 extractors registered and orchestrated here |
+| `ml/features/pipeline.py` | `FeaturePipeline` — two-stage feature extraction | All 10 extractors registered and orchestrated here |
 | `ml/features/event_pricing.py` | `EventPricingFeatureExtractor` — strongest features (60%+ importance) | Bayesian-smoothed target encoding with fallback chains |
 | `ml/training/splitter.py` | `TimeBasedSplitter` — temporal split with artist stratification | Leak prevention depends on correct splitting |
 | `schemas/listings.py` | `TicketListing`, `ScrapedEvent` — core data models | Schema changes cascade everywhere |

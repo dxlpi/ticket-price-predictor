@@ -23,17 +23,6 @@ class ArtistStats:
     listing_count: int
     premium_ratio: float  # % of listings > $200
 
-    def to_dict(self) -> dict[str, float]:
-        """Convert to feature dictionary."""
-        return {
-            "artist_avg_price": self.avg_price,
-            "artist_median_price": self.median_price,
-            "artist_price_std": self.price_std,
-            "artist_event_count": float(self.event_count),
-            "artist_listing_count": float(self.listing_count),
-            "artist_premium_ratio": self.premium_ratio,
-        }
-
 
 class ArtistStatsCache:
     """Cache of artist statistics computed from listing data."""

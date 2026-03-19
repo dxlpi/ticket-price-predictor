@@ -4,18 +4,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 from ticket_price_predictor.schemas import (
     ScrapedEvent,
     TicketListing,
     create_listing_from_scraped,
 )
-from ticket_price_predictor.scrapers import (
-    PlaywrightStubHubScraper,
-    StubHubScraper,
-    VividSeatsScraper,
-)
+from ticket_price_predictor.scrapers import VividSeatsScraper
 from ticket_price_predictor.storage import ListingRepository
 
 
@@ -49,7 +44,6 @@ class ListingCollector:
         self,
         data_dir: Path,
         delay_seconds: float = 2.0,
-        use_browser: bool = False,
         source: DataSource = DataSource.VIVIDSEATS,
         preprocess: bool = False,
     ) -> None:
@@ -58,13 +52,11 @@ class ListingCollector:
         Args:
             data_dir: Base directory for data storage
             delay_seconds: Delay between scraper requests
-            use_browser: Use Playwright browser automation (slower but bypasses anti-bot)
-            source: Data source to use (vividseats recommended, stubhub blocked)
+            source: Data source to use (vividseats)
             preprocess: Enable preprocessing pipeline before storage (default: False)
         """
         self._data_dir = data_dir
         self._delay = delay_seconds
-        self._use_browser = use_browser
         self._source = source
         self._preprocess = preprocess
         self._repository = ListingRepository(data_dir)
@@ -78,14 +70,9 @@ class ListingCollector:
             builder = PipelineBuilder(config)
             self._pipeline = builder.build_preset("listings")
 
-    def _get_scraper_class(self) -> type[Any]:
-        """Get the appropriate scraper class based on configuration."""
-        if self._source == DataSource.VIVIDSEATS:
-            return VividSeatsScraper
-        elif self._use_browser:
-            return PlaywrightStubHubScraper
-        else:
-            return StubHubScraper
+    def _get_scraper_class(self) -> type[VividSeatsScraper]:
+        """Get the scraper class."""
+        return VividSeatsScraper
 
     async def collect_for_artist(
         self,
@@ -237,22 +224,34 @@ class ListingCollector:
 
     async def _collect_event_listings(
         self,
-        scraper: StubHubScraper | PlaywrightStubHubScraper | VividSeatsScraper,
+        scraper: VividSeatsScraper,
         event: ScrapedEvent,
         max_listings: int,
         timestamp: datetime,
     ) -> list[TicketListing]:
         """Collect and convert listings for a single event."""
+        import logging
+
+        from ticket_price_predictor.validation.quality import DataValidator
+
+        logger = logging.getLogger(__name__)
+
         # Fetch raw listings
         scraped_listings = await scraper.get_event_listings(
             event.event_url,
             max_listings=max_listings,
         )
 
-        # Convert to TicketListing objects
+        validator = DataValidator()
         listings: list[TicketListing] = []
         for scraped in scraped_listings:
             listing = create_listing_from_scraped(scraped, event, timestamp)
-            listings.append(listing)
+            result = validator.validate_listing(listing)
+            if result.is_valid:
+                listings.append(listing)
+            else:
+                logger.warning(f"Invalid listing rejected: {result.errors}")
+            for w in result.warnings:
+                logger.debug(f"Listing warning: {w}")
 
         return listings

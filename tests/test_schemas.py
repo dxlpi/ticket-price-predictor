@@ -146,7 +146,8 @@ class TestPriceSnapshot:
         assert "event_id" in schema.names
         assert "seat_zone" in schema.names
         assert "price_min" in schema.names
-        assert len(schema) == 8
+        assert "source" in schema.names
+        assert len(schema) == 9
 
 
 class TestSeatZone:

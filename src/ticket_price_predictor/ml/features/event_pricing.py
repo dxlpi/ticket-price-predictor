@@ -27,7 +27,7 @@ class EventPricingFeatureExtractor(FeatureExtractor):
 
     SMOOTHING_FACTOR = 20  # Bayesian smoothing for small-sample events
 
-    def __init__(self, include_section_feature: bool = False) -> None:
+    def __init__(self, include_section_feature: bool = True) -> None:
         self._include_section_feature = include_section_feature
         self._event_stats: dict[
             str, dict[str, float]
@@ -50,6 +50,12 @@ class EventPricingFeatureExtractor(FeatureExtractor):
         # Set of prices per event seen during fit(). Used in extract() to guard
         # against val/test rows from shared events incorrectly triggering LOO.
         self._train_event_prices: dict[str, set[float]] = {}
+        # Distribution shape stats: event_id -> {skewness, iqr, kurtosis}
+        self._event_distribution_stats: dict[str, dict[str, float]] = {}
+        # Zone distribution: (event_id, zone) -> {range_ratio}
+        self._event_zone_distribution_stats: dict[tuple[str, str], dict[str, float]] = {}
+        # Global distribution defaults (computed during fit)
+        self._global_distribution_stats: dict[str, float] = {}
         self._fitted = False
 
     @property
@@ -64,6 +70,14 @@ class EventPricingFeatureExtractor(FeatureExtractor):
         ]
         if self._include_section_feature:
             names.append("event_section_median_price")
+        # Distribution shape features
+        names.extend(
+            [
+                "event_price_iqr",
+                "event_price_skewness",
+                "zone_price_range_ratio",
+            ]
+        )
         return names
 
     def fit(self, df: pd.DataFrame) -> "EventPricingFeatureExtractor":
@@ -137,6 +151,34 @@ class EventPricingFeatureExtractor(FeatureExtractor):
             self._event_price_sums[event_id_str] = float(grp_prices.sum())
             self._event_price_counts[event_id_str] = n
 
+        # Per-event distribution shape stats (skewness, IQR)
+        self._event_distribution_stats = {}
+        global_iqr = (
+            float(prices.quantile(0.75) - prices.quantile(0.25)) if len(prices) > 3 else 0.0
+        )
+        global_skewness = float(prices.skew()) if len(prices) > 2 else 0.0
+        self._global_distribution_stats = {
+            "iqr": global_iqr,
+            "skewness": global_skewness,
+            "range_ratio": 0.5,  # default zone range ratio
+        }
+        for event_id, group in df.groupby("event_id"):
+            grp_prices = group["listing_price"].dropna()
+            n = len(grp_prices)
+            if n < 3:
+                continue
+            event_id_str = str(event_id)
+            q75 = float(grp_prices.quantile(0.75))
+            q25 = float(grp_prices.quantile(0.25))
+            iqr = q75 - q25
+            skewness = float(grp_prices.skew()) if n > 2 else 0.0
+            # Clamp skewness to [-3, 3] to prevent extreme values
+            skewness = float(np.clip(skewness, -3.0, 3.0))
+            self._event_distribution_stats[event_id_str] = {
+                "iqr": iqr,
+                "skewness": skewness,
+            }
+
         # Per-(event, zone) stats (smoothed toward event median)
         self._event_zone_stats = {}
         if has_section:
@@ -152,6 +194,22 @@ class EventPricingFeatureExtractor(FeatureExtractor):
                 self._event_zone_stats[(event_id_str, str(zone))] = {
                     "median": smoothed_median,
                     "count": float(n),
+                }
+
+        # Per-(event, zone) distribution stats: range_ratio = (max - min) / median
+        self._event_zone_distribution_stats = {}
+        if has_section:
+            for (event_id, zone), group in df.groupby(["event_id", "_zone"]):
+                grp_prices = group["listing_price"].dropna()
+                n = len(grp_prices)
+                if n < 5:
+                    continue
+                p_min = float(grp_prices.min())
+                p_max = float(grp_prices.max())
+                p_median = float(grp_prices.median())
+                range_ratio = (p_max - p_min) / max(p_median, 1.0)
+                self._event_zone_distribution_stats[(str(event_id), str(zone))] = {
+                    "range_ratio": float(np.clip(range_ratio, 0.0, 10.0)),
                 }
 
         # Per-(event, section) stats (smoothed toward event_zone median)
@@ -246,6 +304,9 @@ class EventPricingFeatureExtractor(FeatureExtractor):
         event_price_cvs = []
         event_zone_price_ratios = []
         event_section_median_prices: list[float] = []
+        event_price_iqrs: list[float] = []
+        event_price_skewnesses: list[float] = []
+        zone_price_range_ratios: list[float] = []
 
         for _, row in df.iterrows():
             event_id = str(row.get("event_id", "")) if row.get("event_id") is not None else ""
@@ -320,6 +381,23 @@ class EventPricingFeatureExtractor(FeatureExtractor):
                 es_median = section_stats["median"] if section_stats is not None else ez_median
                 event_section_median_prices.append(es_median)
 
+            # Distribution shape features (with global fallback)
+            dist_stats = self._event_distribution_stats.get(event_id)
+            if dist_stats is not None:
+                event_price_iqrs.append(dist_stats["iqr"])
+                event_price_skewnesses.append(dist_stats["skewness"])
+            else:
+                event_price_iqrs.append(self._global_distribution_stats.get("iqr", 0.0))
+                event_price_skewnesses.append(self._global_distribution_stats.get("skewness", 0.0))
+
+            zone_dist = self._event_zone_distribution_stats.get((event_id, zone))
+            if zone_dist is not None:
+                zone_price_range_ratios.append(zone_dist["range_ratio"])
+            else:
+                zone_price_range_ratios.append(
+                    self._global_distribution_stats.get("range_ratio", 0.5)
+                )
+
             event_median_prices.append(ev_median)
             event_zone_median_prices.append(ez_median)
             event_listing_counts.append(float(np.log1p(ev_count)))
@@ -333,6 +411,9 @@ class EventPricingFeatureExtractor(FeatureExtractor):
         result["event_zone_price_ratio"] = event_zone_price_ratios
         if self._include_section_feature:
             result["event_section_median_price"] = event_section_median_prices
+        result["event_price_iqr"] = event_price_iqrs
+        result["event_price_skewness"] = event_price_skewnesses
+        result["zone_price_range_ratio"] = zone_price_range_ratios
 
         return result
 

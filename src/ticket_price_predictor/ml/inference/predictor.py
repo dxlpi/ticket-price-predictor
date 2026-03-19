@@ -62,6 +62,11 @@ class PricePredictor:
                 # all predictions using training-mean defaults for these features.
                 include_snapshot=False,
                 popularity_service=popularity_service,
+                # Old models without companion _pipeline.joblib were trained without
+                # section feature; disable to prevent feature-count mismatch.
+                extractor_params={
+                    "EventPricingFeatureExtractor": {"include_section_feature": False}
+                },
             )
 
     @classmethod

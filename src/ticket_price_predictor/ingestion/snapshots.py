@@ -166,6 +166,7 @@ class SnapshotCollector:
                 price_max=zone_price,
                 inventory_remaining=None,  # Not available from Discovery API
                 days_to_event=days_to_event,
+                source="ticketmaster",
             )
             snapshots.append(snapshot)
 
@@ -210,4 +211,5 @@ class SnapshotCollector:
             price_max=price,
             inventory_remaining=inventory,
             days_to_event=days_to_event,
+            source="ticketmaster",
         )

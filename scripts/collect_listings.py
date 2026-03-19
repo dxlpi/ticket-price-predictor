@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
-"""Collect real seat-level ticket listings from ticket marketplaces.
+"""Collect real seat-level ticket listings from Vivid Seats.
 
 This script scrapes ticket listings with full seat-level detail:
 - Section, row, and seat numbers
 - Current listing price
 - Quantity available
 
-Supported sources:
-- vividseats (default, recommended - no anti-bot blocking)
-- stubhub (often blocked by anti-bot protection)
-
 Usage:
     python scripts/collect_listings.py --artist "Eagles"
     python scripts/collect_listings.py --artist "Taylor Swift" --max-events 5
-    python scripts/collect_listings.py --source stubhub --browser --artist "Coldplay"
+    python scripts/collect_listings.py --event-url "https://www.vividseats.com/..."
 """
 
 import argparse
@@ -27,7 +23,7 @@ from ticket_price_predictor.storage import ListingRepository
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Collect real seat-level ticket listings from StubHub"
+        description="Collect real seat-level ticket listings from Vivid Seats"
     )
 
     parser.add_argument(
@@ -37,7 +33,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--event-url",
-        help="Direct URL to a StubHub event page",
+        help="Direct URL to a Vivid Seats event page",
     )
 
     parser.add_argument(
@@ -74,20 +70,6 @@ def parse_args() -> argparse.Namespace:
         help="Show sample of collected listings",
     )
 
-    parser.add_argument(
-        "--browser",
-        action="store_true",
-        help="Use browser automation for StubHub (slower but may bypass anti-bot)",
-    )
-
-    parser.add_argument(
-        "--source",
-        type=str,
-        choices=["vividseats", "stubhub"],
-        default="vividseats",
-        help="Data source to use (default: vividseats - recommended)",
-    )
-
     return parser.parse_args()
 
 
@@ -99,25 +81,19 @@ async def main() -> None:
         print("Error: Must provide either --artist or --event-url")
         return
 
-    # Convert source string to enum
-    source = DataSource(args.source)
-
     print("=" * 50)
     print("TICKET LISTING COLLECTOR")
     print("=" * 50)
     print()
-    print(f"Data source: {source.value.upper()}")
+    print(f"Data source: VIVIDSEATS")
     print(f"Data directory: {args.data_dir}")
     print(f"Request delay: {args.delay}s")
-    if source == DataSource.STUBHUB:
-        print(f"Browser mode: {'ON' if args.browser else 'OFF'}")
     print()
 
     collector = ListingCollector(
         data_dir=args.data_dir,
         delay_seconds=args.delay,
-        use_browser=args.browser,
-        source=source,
+        source=DataSource.VIVIDSEATS,
     )
 
     if args.artist:

@@ -69,6 +69,7 @@ class PriceSnapshot(BaseModel):
         default=None, ge=0, description="Tickets remaining in zone"
     )
     days_to_event: int = Field(..., description="Days until event date")
+    source: str = Field(default="vividseats", description="Data source (vividseats, ticketmaster)")
 
     @model_validator(mode="after")
     def validate_price_ordering(self) -> Self:
@@ -98,5 +99,6 @@ class PriceSnapshot(BaseModel):
                 pa.field("price_max", pa.float64(), nullable=True),
                 pa.field("inventory_remaining", pa.int32(), nullable=True),
                 pa.field("days_to_event", pa.int32(), nullable=False),
+                pa.field("source", pa.string(), nullable=False),
             ]
         )
