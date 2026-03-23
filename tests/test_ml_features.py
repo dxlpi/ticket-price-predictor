@@ -154,11 +154,11 @@ class TestEventFeatureExtractor:
         assert "is_weekend" in extractor.feature_names
 
     def test_extract_event_type(self):
-        """Test event type encoding."""
+        """Test event type encoding — map keys are lowercase."""
         extractor = EventFeatureExtractor()
         df = pd.DataFrame(
             {
-                "event_type": ["CONCERT", "SPORTS", "THEATER"],
+                "event_type": ["concert", "sports", "theater"],
                 "city": ["New York", "Chicago", "Miami"],
                 "event_datetime": pd.to_datetime(["2024-06-15", "2024-06-16", "2024-12-25"]),
             }
@@ -576,16 +576,14 @@ class TestFeaturePipeline:
         # Momentum (no snapshot)
         pipeline_with_momentum = FeaturePipeline(include_momentum=True, include_snapshot=False)
 
-        # No extras: performer(8) + event(9) + seating(6) + timeseries(6)
-        #   + event_pricing(8) + relative_pricing(3) + regional(7) + popularity(7)
-        #   + listing(4) + venue(4) + interactions(7) = 69
-        assert len(pipeline_no_extras.feature_names) == 69
+        # No extras baseline (no snapshot, no momentum)
+        assert len(pipeline_no_extras.feature_names) == 72
 
-        # With snapshot (default): 69 + 4 snapshot = 73
-        assert len(pipeline_with_snapshot.feature_names) == 73
+        # With snapshot (default): baseline + 4 snapshot features
+        assert len(pipeline_with_snapshot.feature_names) == 76
 
-        # With momentum (no snapshot): 69 + 4 momentum = 73
-        assert len(pipeline_with_momentum.feature_names) == 73
+        # With momentum (no snapshot): baseline + 4 momentum features
+        assert len(pipeline_with_momentum.feature_names) == 76
 
     def test_feature_count_without_new_extractors(self):
         """Test feature count when optional extractors are disabled."""
@@ -595,9 +593,7 @@ class TestFeaturePipeline:
             include_popularity=False,
             include_regional=False,
         )
-        # performer(8) + event(9) + seating(6) + timeseries(6) + event_pricing(8)
-        #   + relative_pricing(3) + listing(4) + venue(4) + interactions(7) = 55
-        assert len(pipeline.feature_names) == 55
+        assert len(pipeline.feature_names) == 58
 
 
 class TestEventPricingLOO:
@@ -682,3 +678,70 @@ class TestEventPricingLOO:
         # e2 row (index 3, n=1): LOO falls back to global mean — may equal non-LOO
         # We don't assert equality here, just confirm it doesn't crash
         assert not pd.isna(result_loo["event_median_price"].iloc[3])
+
+
+# ============================================================================
+# EventFeatureExtractor EVENT_TYPE_MAP Tests
+# ============================================================================
+
+
+class TestEventTypeMapEncoding:
+    """Tests for EventFeatureExtractor EVENT_TYPE_MAP encoding."""
+
+    def _extractor(self):
+        return EventFeatureExtractor()
+
+    def _df(self, event_types: list[str]) -> "pd.DataFrame":
+        return pd.DataFrame(
+            {
+                "event_type": event_types,
+                "city": ["New York"] * len(event_types),
+                "event_datetime": pd.to_datetime(["2024-07-15"] * len(event_types)),
+            }
+        )
+
+    def test_concert_encodes_to_0(self):
+        """'concert' maps to 0."""
+        result = self._extractor().extract(self._df(["concert"]))
+        assert result["event_type_encoded"].iloc[0] == 0
+
+    def test_sports_encodes_to_1(self):
+        """'sports' maps to 1."""
+        result = self._extractor().extract(self._df(["sports"]))
+        assert result["event_type_encoded"].iloc[0] == 1
+
+    def test_theater_encodes_to_2(self):
+        """'theater' maps to 2."""
+        result = self._extractor().extract(self._df(["theater"]))
+        assert result["event_type_encoded"].iloc[0] == 2
+
+    def test_comedy_encodes_to_3(self):
+        """'comedy' maps to 3."""
+        result = self._extractor().extract(self._df(["comedy"]))
+        assert result["event_type_encoded"].iloc[0] == 3
+
+    def test_all_four_types_together(self):
+        """All four event types encode to the correct integers."""
+        result = self._extractor().extract(self._df(["concert", "sports", "theater", "comedy"]))
+        assert result["event_type_encoded"].tolist() == [0, 1, 2, 3]
+
+    def test_lowercase_input_matches(self):
+        """Lowercase input values resolve correctly (map keys are lowercase)."""
+        result = self._extractor().extract(self._df(["comedy", "concert"]))
+        assert result["event_type_encoded"].tolist() == [3, 0]
+
+    def test_unknown_event_type_defaults_to_0(self):
+        """Unrecognised event_type falls back to 0 (fillna default)."""
+        result = self._extractor().extract(self._df(["festival"]))
+        assert result["event_type_encoded"].iloc[0] == 0
+
+    def test_missing_event_type_column_defaults_to_0(self):
+        """Missing event_type column produces event_type_encoded=0 for all rows."""
+        df = pd.DataFrame(
+            {
+                "city": ["Chicago", "LA"],
+                "event_datetime": pd.to_datetime(["2024-07-15", "2024-08-01"]),
+            }
+        )
+        result = self._extractor().extract(df)
+        assert (result["event_type_encoded"] == 0).all()

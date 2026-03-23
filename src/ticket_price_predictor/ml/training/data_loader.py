@@ -81,6 +81,7 @@ class DataLoader:
                 "listing_price": listing.listing_price,
                 "total_price": listing.total_price,
                 "days_to_event": listing.days_to_event,
+                "event_type": listing.event_type,
                 "source": listing.source,
             }
             # Add computed fields if available

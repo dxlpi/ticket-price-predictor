@@ -41,6 +41,7 @@ class TicketListing(BaseModel):
 
     # Time-based
     days_to_event: int
+    event_type: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -84,6 +85,7 @@ class TicketListing(BaseModel):
                 ("total_price", pa.float64()),
                 ("currency", pa.string()),
                 ("days_to_event", pa.int32()),
+                pa.field("event_type", pa.string(), nullable=True),
                 ("markup_ratio", pa.float64()),
                 ("seat_description", pa.string()),
             ]
@@ -102,6 +104,7 @@ class ScrapedEvent(BaseModel):
     event_url: str
     min_price: float | None = None
     ticket_count: int | None = None
+    event_type: str | None = None
 
 
 class ScrapedListing(BaseModel):
@@ -164,4 +167,5 @@ def create_listing_from_scraped(
         listing_price=scraped.price_per_ticket,
         total_price=scraped.total_price,
         days_to_event=days_to_event,
+        event_type=event.event_type,
     )

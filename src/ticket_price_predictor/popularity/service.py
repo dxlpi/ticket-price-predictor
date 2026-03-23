@@ -286,6 +286,46 @@ class PopularityService:
 
         return selected
 
+    def discover_artists(
+        self,
+        genres: list[str] | None = None,
+    ) -> list[str]:
+        """Discover artist names from Last.fm charts and genre tags.
+
+        Aggregates from:
+        1. Last.fm chart.getTopArtists (global top artists)
+        2. Last.fm tag.getTopArtists for each genre (genre diversity)
+
+        Results are in-memory only (no persistent cache — called once per run).
+
+        Args:
+            genres: Genre tags to fetch. Defaults to a standard set if None.
+
+        Returns:
+            Deduplicated list of artist names
+        """
+        if self.lastfm is None or not self.lastfm.available:
+            return []
+
+        if genres is None:
+            genres = ["rock", "pop", "hip-hop", "country", "electronic", "k-pop", "latin", "r-n-b"]
+
+        # Use dict keyed by lowercase name to deduplicate, preserving original casing
+        seen: dict[str, str] = {}
+
+        for name in self.lastfm.get_top_artists(limit=100):
+            key = name.lower()
+            if key not in seen:
+                seen[key] = name
+
+        for tag in genres:
+            for name in self.lastfm.get_top_artists_by_tag(tag, limit=30):
+                key = name.lower()
+                if key not in seen:
+                    seen[key] = name
+
+        return list(seen.values())
+
     def calculate_max_events(self, ranked_performers: list[ArtistPopularity]) -> int:
         """Calculate total max events based on tier allocations.
 

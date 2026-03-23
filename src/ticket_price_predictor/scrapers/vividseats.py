@@ -19,6 +19,17 @@ from ticket_price_predictor.schemas import ScrapedEvent, ScrapedListing
 logger = logging.getLogger(__name__)
 
 
+# VividSeats hermes API category IDs
+# Category 2 = concerts is confirmed. Others to be expanded after API probing.
+CATEGORY_IDS: dict[str, int] = {
+    "concerts": 2,
+}
+
+CATEGORY_TO_EVENT_TYPE: dict[int, str] = {
+    2: "concert",
+}
+
+
 class VividSeatsScraper:
     """Playwright-based Vivid Seats scraper.
 
@@ -178,114 +189,148 @@ class VividSeatsScraper:
         )
         return result
 
-    async def browse_concerts(
+    async def browse_events(
         self,
+        category_ids: list[int] | None = None,
         max_pages: int = 10,
         max_events: int = 200,
         rows_per_page: int = 25,
     ) -> list[ScrapedEvent]:
-        """Browse upcoming concerts via the hermes productions API.
+        """Browse upcoming events via the hermes productions API.
+
+        Supports multiple event categories by looping over category IDs.
+        Events are deduplicated by ID across categories.
 
         Args:
-            max_pages: Maximum number of API pages to fetch
-            max_events: Stop after collecting this many events
+            category_ids: Category IDs to browse. None = all known IDs from CATEGORY_IDS.
+            max_pages: Maximum API pages per category
+            max_events: Total events cap across all categories
             rows_per_page: Results per API page (max 25)
 
         Returns:
-            List of ScrapedEvent objects for upcoming concerts
+            List of ScrapedEvent objects with event_type populated
         """
         if not self._page:
             raise RuntimeError("Scraper not initialized. Use 'async with' context.")
+
+        if category_ids is None:
+            category_ids = list(CATEGORY_TO_EVENT_TYPE.keys())
 
         # Navigate to the site first so browser cookies/session are established
         await self._page.goto(self.BASE_URL, wait_until="domcontentloaded", timeout=60000)
         await self._delay_random()
 
         events: list[ScrapedEvent] = []
-        category_id = 2  # concerts
+        seen_ids: set[str] = set()
 
-        for page_num in range(1, max_pages + 1):
+        for category_id in category_ids:
             if len(events) >= max_events:
                 break
 
-            logger.debug(f"Fetching productions page {page_num}")
-            try:
-                data = await self._fetch_productions_page(category_id, page_num, rows_per_page)
-            except Exception as e:
-                logger.warning(f"Productions API page {page_num} failed: {e}")
-                break
+            event_type = CATEGORY_TO_EVENT_TYPE.get(category_id, "concert")
+            is_concert = category_id == 2
 
-            items = data.get("items", [])
-            if not items:
-                logger.debug("No items returned — stopping pagination")
-                break
-
-            for item in items:
+            for page_num in range(1, max_pages + 1):
                 if len(events) >= max_events:
                     break
 
-                # Skip parking listings
-                if item.get("subCategoryId") == 75:
-                    continue
-
-                # Extract headliner — skip events with no master performer
-                performers = item.get("performers", [])
-                headliner = next(
-                    (p["name"] for p in performers if p.get("master")),
-                    None,
-                )
-                if headliner is None:
-                    logger.debug(f"Skipped event with no master performer: {item.get('name')}")
-                    continue
-
+                logger.debug(f"Fetching category {category_id} page {page_num}")
                 try:
-                    event_id = str(item.get("id", ""))
-                    name = item.get("name", "Unknown Event")
-                    venue = item.get("venue", {})
-                    venue_name = venue.get("name", "Unknown Venue")
-                    city = venue.get("city", "Unknown")
-                    state = venue.get("state", "")
-
-                    # Parse date — format: 2026-08-01T12:55:00-04:00[America/New_York]
-                    local_date = item.get("localDate", "")
-                    try:
-                        date_str = local_date.split("[")[0] if "[" in local_date else local_date
-                        event_dt = datetime.fromisoformat(date_str)
-                    except (ValueError, TypeError):
-                        event_dt = datetime.now(UTC)
-
-                    web_path = item.get("webPath", "")
-                    event_url = f"{self.BASE_URL}{web_path}" if web_path else ""
-
-                    min_price = item.get("minPrice")
-                    ticket_count = item.get("ticketCount")
-
-                    event = ScrapedEvent(
-                        stubhub_event_id=event_id,
-                        event_name=name,
-                        artist_or_team=headliner,
-                        venue_name=venue_name,
-                        city=f"{city}, {state}".strip(", "),
-                        event_datetime=event_dt,
-                        event_url=event_url,
-                        min_price=float(min_price) if min_price else None,
-                        ticket_count=int(ticket_count) if ticket_count else None,
+                    data = await self._fetch_productions_page(category_id, page_num, rows_per_page)
+                except Exception as e:
+                    logger.warning(
+                        f"Productions API category {category_id} page {page_num} failed: {e}"
                     )
-                    events.append(event)
+                    break
 
-                except (KeyError, ValueError, TypeError) as e:
-                    logger.debug(f"Skipped event item: {e}")
-                    continue
+                items = data.get("items", [])
+                if not items:
+                    logger.debug("No items returned — stopping pagination")
+                    break
 
-            total_pages = data.get("numberOfPages", 1)
-            logger.info(f"Page {page_num}/{total_pages}: collected {len(events)} events so far")
+                for item in items:
+                    if len(events) >= max_events:
+                        break
 
-            if page_num >= total_pages:
-                break
+                    # Skip parking listings
+                    if item.get("subCategoryId") == 75:
+                        continue
 
-            await self._delay_random()
+                    # Determine artist/team name based on category
+                    if is_concert:
+                        # Concerts: require a master performer
+                        performers = item.get("performers", [])
+                        artist_or_team = next(
+                            (p["name"] for p in performers if p.get("master")),
+                            None,
+                        )
+                        if artist_or_team is None:
+                            logger.debug(
+                                f"Skipped event with no master performer: {item.get('name')}"
+                            )
+                            continue
+                    else:
+                        # Sports/other: use event name directly
+                        artist_or_team = item.get("name", "Unknown Event")
 
-        logger.info(f"browse_concerts() returned {len(events)} events")
+                    try:
+                        event_id = str(item.get("id", ""))
+
+                        # Deduplicate across categories
+                        if event_id in seen_ids:
+                            continue
+                        seen_ids.add(event_id)
+
+                        name = item.get("name", "Unknown Event")
+                        venue = item.get("venue", {})
+                        venue_name = venue.get("name", "Unknown Venue")
+                        city = venue.get("city", "Unknown")
+                        state = venue.get("state", "")
+
+                        # Parse date — format: 2026-08-01T12:55:00-04:00[America/New_York]
+                        local_date = item.get("localDate", "")
+                        try:
+                            date_str = local_date.split("[")[0] if "[" in local_date else local_date
+                            event_dt = datetime.fromisoformat(date_str)
+                        except (ValueError, TypeError):
+                            event_dt = datetime.now(UTC)
+
+                        web_path = item.get("webPath", "")
+                        event_url = f"{self.BASE_URL}{web_path}" if web_path else ""
+
+                        min_price = item.get("minPrice")
+                        ticket_count = item.get("ticketCount")
+
+                        event = ScrapedEvent(
+                            stubhub_event_id=event_id,
+                            event_name=name,
+                            artist_or_team=artist_or_team,
+                            venue_name=venue_name,
+                            city=f"{city}, {state}".strip(", "),
+                            event_datetime=event_dt,
+                            event_url=event_url,
+                            min_price=float(min_price) if min_price else None,
+                            ticket_count=int(ticket_count) if ticket_count else None,
+                            event_type=event_type,
+                        )
+                        events.append(event)
+
+                    except (KeyError, ValueError, TypeError) as e:
+                        logger.debug(f"Skipped event item: {e}")
+                        continue
+
+                total_pages = data.get("numberOfPages", 1)
+                logger.info(
+                    f"Category {category_id} page {page_num}/{total_pages}: "
+                    f"collected {len(events)} events so far"
+                )
+
+                if page_num >= total_pages:
+                    break
+
+                await self._delay_random()
+
+        logger.info(f"browse_events() returned {len(events)} events")
         return events
 
     def _extract_events_from_production_list(

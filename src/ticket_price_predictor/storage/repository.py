@@ -588,6 +588,7 @@ class ListingRepository:
             venue_name=data["venue_name"],
             city=data["city"],
             event_datetime=event_datetime,
+            event_type=data.get("event_type"),
             section=data["section"],
             row=data["row"],
             seat_from=data.get("seat_from"),

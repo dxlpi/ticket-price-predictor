@@ -139,6 +139,7 @@ class MLConfig:
             "CONCERT": self.event_multiplier_concert,
             "SPORTS": self.event_multiplier_sports,
             "THEATER": self.event_multiplier_theater,
+            "COMEDY": self.event_multiplier_concert,
         }
 
 

@@ -250,12 +250,7 @@ class TestDistributionFeatures:
         extractor = EventPricingFeatureExtractor()
         extractor.fit(df)
         result = extractor.extract(df)
-        assert (
-            not result[["event_price_iqr", "event_price_skewness"]]
-            .isnull()
-            .any()
-            .any()
-        )
+        assert not result[["event_price_iqr", "event_price_skewness"]].isnull().any().any()
 
 
 class TestFallbackChain:

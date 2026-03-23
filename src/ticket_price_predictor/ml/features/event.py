@@ -56,9 +56,10 @@ class EventFeatureExtractor(FeatureExtractor):
 
     # Event type encoding
     EVENT_TYPE_MAP = {
-        "CONCERT": 0,
-        "SPORTS": 1,
-        "THEATER": 2,
+        "concert": 0,
+        "sports": 1,
+        "theater": 2,
+        "comedy": 3,
     }
 
     def __init__(self) -> None:

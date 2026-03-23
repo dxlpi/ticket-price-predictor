@@ -90,3 +90,58 @@ class LastfmPopularity:
         except Exception as e:
             logger.warning(f"Last.fm API error for {artist_name}: {e}")
             return None
+
+    def get_top_artists(self, limit: int = 50) -> list[str]:
+        """Fetch top global artists from Last.fm charts.
+
+        Returns list of artist names, empty list on failure.
+        """
+        if not self._available:
+            return []
+
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(
+                    self.BASE_URL,
+                    params={
+                        "method": "chart.getTopArtists",
+                        "limit": limit,
+                        "api_key": self.api_key,
+                        "format": "json",
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            return [artist["name"] for artist in data["artists"]["artist"]]
+        except Exception as e:
+            logger.warning(f"Last.fm chart.getTopArtists error: {e}")
+            return []
+
+    def get_top_artists_by_tag(self, tag: str, limit: int = 50) -> list[str]:
+        """Fetch top artists for a genre tag from Last.fm.
+
+        Returns list of artist names, empty list on failure.
+        """
+        if not self._available:
+            return []
+
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(
+                    self.BASE_URL,
+                    params={
+                        "method": "tag.getTopArtists",
+                        "tag": tag,
+                        "limit": limit,
+                        "api_key": self.api_key,
+                        "format": "json",
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            return [artist["name"] for artist in data["topartists"]["artist"]]
+        except Exception as e:
+            logger.warning(f"Last.fm tag.getTopArtists error for tag '{tag}': {e}")
+            return []

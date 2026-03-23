@@ -160,7 +160,7 @@ class PricePredictor:
                     "section": section,
                     "row": row,
                     "days_to_event": days_to_event,
-                    "event_type": event_type,
+                    "event_type": event_type.lower(),
                     "quantity": quantity,
                 }
             ]

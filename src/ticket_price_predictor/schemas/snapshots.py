@@ -14,6 +14,7 @@ class EventType(StrEnum):
     CONCERT = "concert"
     SPORTS = "sports"
     THEATER = "theater"
+    COMEDY = "comedy"
 
 
 class SeatZone(StrEnum):

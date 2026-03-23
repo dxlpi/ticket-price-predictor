@@ -35,8 +35,22 @@ TIER_EVENT_LIMITS = {
     "stadium": 3,
     "arena": 2,
     "theater": 1,
+    "club": 1,
     "emerging": 1,
 }
+
+# Discovery phase sub-budget (5 minutes max)
+DISCOVERY_TIME_BUDGET_SECONDS = 5 * 60
+
+# PopularityTier → watchlist tier name mapping
+POPULARITY_TIER_TO_WATCHLIST_TIER = {
+    "high": "stadium",
+    "medium": "arena",
+    "low": "club",
+}
+
+# Max new artists to score per discovery run
+DISCOVERY_MAX_NEW_ARTISTS = 100
 
 WATCHLIST_PATH = Path("data/artist_watchlist.json")
 FESTIVAL_KEYWORDS_PATH = Path("data/festival_keywords.json")
@@ -104,6 +118,127 @@ def is_festival_or_bundle(event_name: str, keywords: list[str]) -> bool:
     """
     name_lower = event_name.lower()
     return any(kw in name_lower for kw in keywords)
+
+
+async def refresh_watchlist(
+    pop_service: PopularityService,
+    data_dir: Path,
+    watchlist_path: Path = WATCHLIST_PATH,
+) -> int:
+    """Discover new artists and refresh the watchlist autonomously.
+
+    Discovery sources (in order):
+    1. Ticketmaster EventRepository — harvest recent artist names
+    2. VividSeats browse_events — extract performer names from all categories
+    3. PopularityService.discover_artists() — Last.fm charts + genre tags
+
+    Scores top DISCOVERY_MAX_NEW_ARTISTS newly discovered artists and
+    adds them to the watchlist with tier assignment. Never removes existing entries.
+    Artists already in the watchlist are not re-tiered.
+
+    Returns:
+        Number of new artists added
+    """
+    start = time.monotonic()
+    print("\n  Phase 0: Watchlist discovery (5-min budget)...")
+
+    # Load current watchlist
+    watchlist = load_artist_watchlist(watchlist_path)
+    existing_artists: set[str] = set()
+    for artists in watchlist.values():
+        existing_artists.update(a.lower() for a in artists)
+
+    # Load _auto_discovered list (or empty)
+    raw: dict[str, Any] = {}
+    if watchlist_path.exists():
+        with open(watchlist_path) as f:
+            raw = json.load(f)
+    auto_discovered: list[str] = raw.get("_auto_discovered", [])
+
+    discovered: set[str] = set()
+
+    # Source 1: Ticketmaster EventRepository
+    try:
+        from ticket_price_predictor.storage import EventRepository
+        event_repo = EventRepository(data_dir)
+        events_meta = event_repo.get_events()
+        for ev in events_meta:
+            if ev.artist_or_team:
+                discovered.add(ev.artist_or_team)
+        print(f"    TM harvest: {len(discovered)} performers")
+    except Exception as e:
+        print(f"    TM harvest failed: {e}")
+
+    if time.monotonic() - start > DISCOVERY_TIME_BUDGET_SECONDS:
+        print("    Discovery budget exceeded after TM harvest")
+    else:
+        # Source 2: VividSeats browse_events (all categories)
+        try:
+            from ticket_price_predictor.scrapers import VividSeatsScraper
+            async with VividSeatsScraper(headless=True, delay_seconds=2.0) as scraper:
+                browse_results = await scraper.browse_events(max_pages=3, max_events=100)
+                for evt in browse_results:
+                    if evt.artist_or_team:
+                        discovered.add(evt.artist_or_team)
+            print(f"    VS browse: {len(discovered)} total performers after browse")
+        except Exception as e:
+            print(f"    VS browse failed: {e}")
+
+    if time.monotonic() - start > DISCOVERY_TIME_BUDGET_SECONDS:
+        print("    Discovery budget exceeded after VS browse")
+    else:
+        # Source 3: Last.fm / PopularityService discovery
+        try:
+            lastfm_artists = pop_service.discover_artists()
+            discovered.update(lastfm_artists)
+            print(f"    Last.fm: {len(lastfm_artists)} artists, {len(discovered)} total")
+        except Exception as e:
+            print(f"    Last.fm discovery failed: {e}")
+
+    # Filter to new artists only (not already in watchlist)
+    new_artists = [a for a in discovered if a.lower() not in existing_artists]
+    print(f"    New artists to score: {len(new_artists)} (cap: {DISCOVERY_MAX_NEW_ARTISTS})")
+    new_artists = new_artists[:DISCOVERY_MAX_NEW_ARTISTS]
+
+    # Score and tier new artists
+    added: list[str] = []
+    scored_tiers: dict[str, list[str]] = {"stadium": [], "arena": [], "club": []}
+    for artist in new_artists:
+        if time.monotonic() - start > DISCOVERY_TIME_BUDGET_SECONDS:
+            print(f"    Scoring budget exceeded, scored {len(added)} artists")
+            break
+        try:
+            popularity = pop_service.get_artist_popularity(artist)
+            tier_name = POPULARITY_TIER_TO_WATCHLIST_TIER.get(popularity.tier.value, "club")
+            scored_tiers[tier_name].append(artist)
+            added.append(artist)
+        except Exception:
+            pass
+
+    if not added:
+        print(f"    No new artists to add (elapsed: {time.monotonic() - start:.0f}s)")
+        return 0
+
+    # Merge into watchlist — preserve existing entries, never re-tier manual
+    for tier_name, new_in_tier in scored_tiers.items():
+        if tier_name not in raw:
+            raw[tier_name] = []
+        for artist in new_in_tier:
+            if artist.lower() not in existing_artists:
+                raw[tier_name].append(artist)
+                # Track as auto-discovered only if not already in watchlist
+                if artist not in auto_discovered:
+                    auto_discovered.append(artist)
+
+    raw["_auto_discovered"] = auto_discovered
+
+    # Write updated watchlist
+    with open(watchlist_path, "w") as f:
+        json.dump(raw, f, indent=2)
+
+    elapsed = time.monotonic() - start
+    print(f"    Added {len(added)} new artists in {elapsed:.0f}s")
+    return len(added)
 
 
 async def get_popular_events(
@@ -235,6 +370,7 @@ async def get_popular_events(
                         "ticket_count": e.ticket_count,
                         "performer": performer_name,
                         "event_datetime": e.event_datetime,
+                        "event_type": e.event_type or "concert",
                     }):
                         added += 1
 
@@ -257,13 +393,13 @@ async def get_popular_events(
             consecutive_failures = 0
 
             try:
-                browse_events = await scraper.browse_concerts(
+                browse_results = await scraper.browse_events(
                     max_pages=10,
                     max_events=remaining_budget + 50,  # fetch extra to account for dedup/filter losses
                 )
 
                 browse_added = 0
-                for evt in browse_events:
+                for evt in browse_results:
                     if len(events) >= max_events:
                         break
                     if _add_event({
@@ -276,10 +412,11 @@ async def get_popular_events(
                         "ticket_count": evt.ticket_count,
                         "performer": evt.artist_or_team,
                         "event_datetime": evt.event_datetime,
+                        "event_type": evt.event_type,
                     }):
                         browse_added += 1
 
-                print(f"  Browse: {len(browse_events)} found, {browse_added} new after dedup/filter")
+                print(f"  Browse: {len(browse_results)} found, {browse_added} new after dedup/filter")
 
             except Exception as browse_err:
                 print(f"  Browse discovery error: {browse_err}")
@@ -451,6 +588,7 @@ async def collect_listings_for_events(
                         city=event["city"],
                         event_datetime=event.get("event_datetime") or datetime.now(UTC),
                         event_url=event["url"],
+                        event_type=event.get("event_type"),
                     )
 
                     # Convert and save listings (with validation)
@@ -521,6 +659,9 @@ async def main() -> None:
 
     # Initialize popularity service
     pop_service = PopularityService()
+
+    # Phase 0: Autonomous watchlist refresh
+    await refresh_watchlist(pop_service, data_dir)
 
     max_events = args.max_events
     mode = "URGENT (≤14 days)" if args.urgent else "FULL"

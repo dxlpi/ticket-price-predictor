@@ -166,3 +166,165 @@ class TestSeatZone:
         """Test seat zone string values."""
         assert SeatZone.FLOOR_VIP.value == "floor_vip"
         assert SeatZone.LOWER_TIER.value == "lower_tier"
+
+
+class TestEventTypeComedy:
+    """Tests for EventType.COMEDY addition."""
+
+    def test_comedy_exists(self):
+        """EventType.COMEDY is defined with value 'comedy'."""
+        assert EventType.COMEDY == "comedy"
+        assert EventType.COMEDY.value == "comedy"
+
+    def test_comedy_in_enum_members(self):
+        """EventType.COMEDY appears in the full enum listing."""
+        assert EventType.COMEDY in list(EventType)
+
+    def test_all_four_event_types_defined(self):
+        """All four event types (concert, sports, theater, comedy) are present."""
+        values = {e.value for e in EventType}
+        assert values == {"concert", "sports", "theater", "comedy"}
+
+
+class TestTicketListingEventType:
+    """Tests for TicketListing.event_type field."""
+
+    def _base_listing(self, **overrides):
+        from datetime import UTC, datetime, timedelta
+
+        from ticket_price_predictor.schemas import TicketListing
+
+        defaults = {
+            "listing_id": "l1",
+            "event_id": "e1",
+            "source": "vividseats",
+            "timestamp": datetime.now(UTC),
+            "event_name": "Test Show",
+            "artist_or_team": "Artist",
+            "venue_name": "Venue",
+            "city": "LA",
+            "event_datetime": datetime.now(UTC) + timedelta(days=30),
+            "section": "Floor A",
+            "row": "1",
+            "quantity": 2,
+            "listing_price": 100.0,
+            "total_price": 200.0,
+            "days_to_event": 30,
+        }
+        defaults.update(overrides)
+        return TicketListing(**defaults)
+
+    def test_event_type_accepts_string(self):
+        """TicketListing accepts event_type as a plain string."""
+        listing = self._base_listing(event_type="comedy")
+        assert listing.event_type == "comedy"
+
+    def test_event_type_defaults_to_none(self):
+        """TicketListing.event_type defaults to None when not provided."""
+        listing = self._base_listing()
+        assert listing.event_type is None
+
+    def test_event_type_accepts_none_explicitly(self):
+        """TicketListing.event_type can be set to None explicitly."""
+        listing = self._base_listing(event_type=None)
+        assert listing.event_type is None
+
+    def test_parquet_schema_includes_event_type(self):
+        """TicketListing.parquet_schema() includes a nullable string event_type field."""
+        import pyarrow as pa
+
+        from ticket_price_predictor.schemas import TicketListing
+
+        schema = TicketListing.parquet_schema()
+        assert "event_type" in schema.names
+        idx = schema.get_field_index("event_type")
+        field = schema.field(idx)
+        assert pa.types.is_string(field.type)
+        assert field.nullable
+
+
+class TestScrapedEventEventType:
+    """Tests for ScrapedEvent.event_type field."""
+
+    def test_scraped_event_accepts_event_type(self):
+        """ScrapedEvent accepts event_type string."""
+        from datetime import UTC, datetime
+
+        from ticket_price_predictor.schemas import ScrapedEvent
+
+        ev = ScrapedEvent(
+            stubhub_event_id="s1",
+            event_name="Comedy Night",
+            artist_or_team="Dave Chappelle",
+            venue_name="The Venue",
+            city="Chicago",
+            event_datetime=datetime.now(UTC),
+            event_url="https://example.com",
+            event_type="comedy",
+        )
+        assert ev.event_type == "comedy"
+
+    def test_scraped_event_event_type_defaults_none(self):
+        """ScrapedEvent.event_type defaults to None."""
+        from datetime import UTC, datetime
+
+        from ticket_price_predictor.schemas import ScrapedEvent
+
+        ev = ScrapedEvent(
+            stubhub_event_id="s2",
+            event_name="Show",
+            artist_or_team="Artist",
+            venue_name="Venue",
+            city="NYC",
+            event_datetime=datetime.now(UTC),
+            event_url="https://example.com",
+        )
+        assert ev.event_type is None
+
+
+class TestCreateListingFromScraped:
+    """Tests for create_listing_from_scraped threading event_type."""
+
+    def _make_scraped_listing(self):
+        from ticket_price_predictor.schemas import ScrapedListing
+
+        return ScrapedListing(
+            listing_id="lst1",
+            section="Floor",
+            row="1",
+            quantity=2,
+            price_per_ticket=150.0,
+            total_price=300.0,
+        )
+
+    def _make_scraped_event(self, event_type=None):
+        from datetime import UTC, datetime, timedelta
+
+        from ticket_price_predictor.schemas import ScrapedEvent
+
+        return ScrapedEvent(
+            stubhub_event_id="ev1",
+            event_name="Show",
+            artist_or_team="Artist",
+            venue_name="Venue",
+            city="NYC",
+            event_datetime=datetime.now(UTC) + timedelta(days=10),
+            event_url="https://example.com",
+            event_type=event_type,
+        )
+
+    def test_threads_event_type_to_listing(self):
+        """create_listing_from_scraped copies event_type from ScrapedEvent."""
+        from ticket_price_predictor.schemas import create_listing_from_scraped
+
+        event = self._make_scraped_event(event_type="comedy")
+        listing = create_listing_from_scraped(self._make_scraped_listing(), event)
+        assert listing.event_type == "comedy"
+
+    def test_none_event_type_passes_through(self):
+        """create_listing_from_scraped sets event_type=None when ScrapedEvent has none."""
+        from ticket_price_predictor.schemas import create_listing_from_scraped
+
+        event = self._make_scraped_event(event_type=None)
+        listing = create_listing_from_scraped(self._make_scraped_listing(), event)
+        assert listing.event_type is None

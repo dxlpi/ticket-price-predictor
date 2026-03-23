@@ -345,3 +345,186 @@ class TestSnapshotProvenance:
         repo = SnapshotRepository(Path("/tmp"))
         snapshot = repo._dict_to_snapshot(data)
         assert snapshot.source == "vividseats"
+
+
+class TestParquetSchemaEvolution:
+    """Tests for append_parquet union semantics across schema versions."""
+
+    def _old_schema_table(self):  # type: ignore[return]
+        """Build a small PyArrow table without the event_type column."""
+        import pyarrow as pa
+
+        return pa.table(
+            {
+                "listing_id": ["l_old"],
+                "event_id": ["e_old"],
+                "source": ["vividseats"],
+                "timestamp": pa.array(
+                    [__import__("datetime").datetime.now(__import__("datetime").timezone.utc)],
+                    type=pa.timestamp("us", tz="UTC"),
+                ),
+                "event_name": ["Old Show"],
+                "artist_or_team": ["Artist"],
+                "venue_name": ["Venue"],
+                "city": ["LA"],
+                "event_datetime": pa.array(
+                    [__import__("datetime").datetime.now(__import__("datetime").timezone.utc)],
+                    type=pa.timestamp("us", tz="UTC"),
+                ),
+                "section": ["Floor"],
+                "row": ["1"],
+                "seat_from": pa.array([None], type=pa.string()),
+                "seat_to": pa.array([None], type=pa.string()),
+                "quantity": pa.array([2], type=pa.int32()),
+                "face_value": pa.array([None], type=pa.float64()),
+                "listing_price": pa.array([100.0], type=pa.float64()),
+                "total_price": pa.array([200.0], type=pa.float64()),
+                "currency": ["USD"],
+                "days_to_event": pa.array([30], type=pa.int32()),
+                # event_type intentionally absent
+                "markup_ratio": pa.array([None], type=pa.float64()),
+                "seat_description": ["Floor, Row 1"],
+            }
+        )
+
+    def _make_new_listing(self, event_type: str | None = "comedy"):
+        """Build a TicketListing with an event_type value."""
+        from datetime import UTC, datetime, timedelta
+
+        from ticket_price_predictor.schemas import TicketListing
+
+        return TicketListing(
+            listing_id="l_new",
+            event_id="e_new",
+            source="vividseats",
+            timestamp=datetime.now(UTC),
+            event_name="New Show",
+            artist_or_team="Artist",
+            venue_name="Venue",
+            city="LA",
+            event_datetime=datetime.now(UTC) + timedelta(days=10),
+            section="Floor",
+            row="1",
+            quantity=2,
+            listing_price=150.0,
+            total_price=300.0,
+            days_to_event=10,
+            event_type=event_type,
+        )
+
+    def test_append_new_schema_to_old_file(self, tmp_path: Path):
+        """New-schema rows (with event_type) appended to old file: new rows have value, old rows null."""
+        import pyarrow.parquet as pq
+
+        from ticket_price_predictor.schemas import TicketListing
+        from ticket_price_predictor.storage.parquet import append_parquet
+
+        parquet_path = tmp_path / "listings.parquet"
+
+        # Write old-schema file directly (no event_type column)
+        old_table = self._old_schema_table()
+        pq.write_table(old_table, parquet_path)
+
+        # Append new listing that has event_type
+        append_parquet(
+            [self._make_new_listing(event_type="comedy")],
+            parquet_path,
+            TicketListing.parquet_schema(),
+        )
+
+        # Read back and verify
+        import pyarrow.parquet as pq2
+
+        result = pq2.read_table(parquet_path)
+        rows = result.to_pylist()
+
+        assert len(rows) == 2
+        old_row = next(r for r in rows if r["listing_id"] == "l_old")
+        new_row = next(r for r in rows if r["listing_id"] == "l_new")
+
+        assert old_row["event_type"] is None  # promoted with null fill
+        assert new_row["event_type"] == "comedy"
+
+    def test_append_old_schema_to_new_file(self, tmp_path: Path):
+        """Old-schema rows (without event_type) appended to new file: missing column filled with null."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from ticket_price_predictor.schemas import TicketListing
+        from ticket_price_predictor.storage.parquet import write_parquet
+
+        parquet_path = tmp_path / "listings.parquet"
+
+        # Write new-schema file first (with event_type)
+        write_parquet(
+            [self._make_new_listing(event_type="concert")],
+            parquet_path,
+            TicketListing.parquet_schema(),
+        )
+
+        # Append old-schema table directly (without event_type column)
+        old_table = self._old_schema_table()
+        existing = pq.read_table(parquet_path)
+        combined = pa.concat_tables([existing, old_table], promote_options="default")
+        pq.write_table(combined, parquet_path)
+
+        result = pq.read_table(parquet_path)
+        rows = result.to_pylist()
+
+        assert len(rows) == 2
+        new_row = next(r for r in rows if r["listing_id"] == "l_new")
+        old_row = next(r for r in rows if r["listing_id"] == "l_old")
+
+        assert new_row["event_type"] == "concert"
+        assert old_row["event_type"] is None  # no data loss; missing column → null
+
+
+class TestDictToListingEventType:
+    """Tests for ListingRepository._dict_to_listing threading event_type."""
+
+    def _base_dict(self, **overrides):
+        from datetime import UTC, datetime, timedelta
+
+        base = {
+            "listing_id": "l1",
+            "event_id": "e1",
+            "source": "vividseats",
+            "timestamp": datetime.now(UTC),
+            "event_name": "Show",
+            "artist_or_team": "Artist",
+            "venue_name": "Venue",
+            "city": "LA",
+            "event_datetime": datetime.now(UTC) + timedelta(days=10),
+            "section": "Floor",
+            "row": "1",
+            "seat_from": None,
+            "seat_to": None,
+            "quantity": 2,
+            "face_value": None,
+            "listing_price": 100.0,
+            "total_price": 200.0,
+            "currency": "USD",
+            "days_to_event": 10,
+            "markup_ratio": None,
+            "seat_description": "Floor, Row 1",
+        }
+        base.update(overrides)
+        return base
+
+    def test_dict_to_listing_populates_event_type(self, tmp_path: Path):
+        """_dict_to_listing sets event_type from dict when present."""
+        from ticket_price_predictor.storage.repository import ListingRepository
+
+        repo = ListingRepository(tmp_path)
+        data = self._base_dict(event_type="comedy")
+        listing = repo._dict_to_listing(data)
+        assert listing.event_type == "comedy"
+
+    def test_dict_to_listing_event_type_absent_gives_none(self, tmp_path: Path):
+        """_dict_to_listing returns event_type=None when key is absent from dict."""
+        from ticket_price_predictor.storage.repository import ListingRepository
+
+        repo = ListingRepository(tmp_path)
+        data = self._base_dict()  # no event_type key
+        listing = repo._dict_to_listing(data)
+        assert listing.event_type is None

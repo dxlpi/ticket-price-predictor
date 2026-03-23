@@ -728,3 +728,121 @@ class TestPopularityIntegration:
         assert result.tier == PopularityTier.LOW
         assert result.popularity_score == 0
         assert len(result.sources_available) == 0
+
+
+# ============================================================================
+# LastfmPopularity Discovery Tests
+# ============================================================================
+
+
+class TestLastfmGetTopArtists:
+    """Tests for LastfmPopularity.get_top_artists."""
+
+    def test_returns_list_of_strings_on_success(self):
+        """get_top_artists returns a list of artist name strings."""
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "artists": {
+                "artist": [
+                    {"name": "Taylor Swift"},
+                    {"name": "Drake"},
+                    {"name": "Bad Bunny"},
+                ]
+            }
+        }
+        mock_response.raise_for_status.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = lambda _: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.return_value = mock_response
+
+        with patch(
+            "ticket_price_predictor.popularity.lastfm.httpx.Client", return_value=mock_client
+        ):
+            client = LastfmPopularity(api_key="fake_key")
+            result = client.get_top_artists(limit=3)
+
+        assert isinstance(result, list)
+        assert result == ["Taylor Swift", "Drake", "Bad Bunny"]
+
+    def test_returns_empty_list_on_http_error(self):
+        """get_top_artists returns [] when the HTTP call raises."""
+        from unittest.mock import MagicMock, patch
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = lambda _: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.side_effect = Exception("connection refused")
+
+        with patch(
+            "ticket_price_predictor.popularity.lastfm.httpx.Client", return_value=mock_client
+        ):
+            client = LastfmPopularity(api_key="fake_key")
+            result = client.get_top_artists()
+
+        assert result == []
+
+    def test_returns_empty_list_when_unavailable(self):
+        """get_top_artists returns [] immediately when api_key is empty."""
+        client = LastfmPopularity(api_key="")
+        result = client.get_top_artists()
+        assert result == []
+
+
+class TestLastfmGetTopArtistsByTag:
+    """Tests for LastfmPopularity.get_top_artists_by_tag."""
+
+    def test_returns_list_of_strings_on_success(self):
+        """get_top_artists_by_tag returns a list of artist name strings for a tag."""
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "topartists": {
+                "artist": [
+                    {"name": "Dave Chappelle"},
+                    {"name": "Kevin Hart"},
+                ]
+            }
+        }
+        mock_response.raise_for_status.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = lambda _: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.return_value = mock_response
+
+        with patch(
+            "ticket_price_predictor.popularity.lastfm.httpx.Client", return_value=mock_client
+        ):
+            client = LastfmPopularity(api_key="fake_key")
+            result = client.get_top_artists_by_tag("comedy", limit=2)
+
+        assert isinstance(result, list)
+        assert result == ["Dave Chappelle", "Kevin Hart"]
+
+    def test_returns_empty_list_on_http_error(self):
+        """get_top_artists_by_tag returns [] when the HTTP call raises."""
+        from unittest.mock import MagicMock, patch
+
+        mock_client = MagicMock()
+        mock_client.__enter__ = lambda _: mock_client
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.side_effect = Exception("timeout")
+
+        with patch(
+            "ticket_price_predictor.popularity.lastfm.httpx.Client", return_value=mock_client
+        ):
+            client = LastfmPopularity(api_key="fake_key")
+            result = client.get_top_artists_by_tag("pop")
+
+        assert result == []
+
+    def test_returns_empty_list_when_unavailable(self):
+        """get_top_artists_by_tag returns [] immediately when api_key is empty."""
+        client = LastfmPopularity(api_key="")
+        result = client.get_top_artists_by_tag("rock")
+        assert result == []
