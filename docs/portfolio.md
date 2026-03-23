@@ -2,7 +2,7 @@
 
 **End-to-end ML system for predicting secondary-market ticket prices at the seat-zone level.**
 
-Built a production data pipeline and gradient boosting model that ingests live resale ticket data from multiple marketplaces, extracts 67 engineered features across 10 domains (58 active after zero-variance removal), and produces per-zone price predictions with 95% confidence intervals — all designed to help buyers identify optimal purchase timing.
+Built a production data pipeline and gradient boosting model that ingests live resale ticket data from multiple marketplaces, extracts 68 engineered features across 10 domains (62 active after zero-variance removal), and produces per-zone price predictions with 95% confidence intervals — all designed to help buyers identify optimal purchase timing.
 
 ## Motivation
 
@@ -15,13 +15,13 @@ The goal: develop a system that predicts a **stable buying window** — a purcha
 The system spans five layers with strict dependency enforcement (no upward imports):
 
 ```
-Data Sources          Ticketmaster API | VividSeats Scraper | YouTube Music | Last.fm
+Data Sources          Ticketmaster API | VividSeats Scraper (multi-category) | YouTube Music | Last.fm
                                        |
 Schemas & Storage     Pydantic v2 models + Hive-partitioned Parquet (PyArrow)
                                        |
 Preprocessing         11-stage composable pipeline (validate → normalize → enrich → flag)
                                        |
-Feature Engineering   10 extractor domains, 67 features (58 active), two-stage pipeline
+Feature Engineering   10 extractor domains, 68 features (62 active), two-stage pipeline
                                        |
 ML Pipeline           LightGBM (GBDT/DART) + Quantile regression → price + 95% CI
 ```
@@ -29,9 +29,10 @@ ML Pipeline           LightGBM (GBDT/DART) + Quantile regression → price + 95%
 ### Data Collection
 
 - **Ticketmaster Discovery API** for event metadata (venue, date, capacity, event type)
-- **VividSeats scraper** using Playwright with stealth mode — intercepts the internal listings API via a network response listener rather than DOM scraping, capturing full listing payloads (section, row, price, quantity) in a single network call
+- **VividSeats scraper** using Playwright with stealth mode — intercepts the internal listings API via a network response listener rather than DOM scraping, capturing full listing payloads (section, row, price, quantity) in a single network call across multiple event categories (concerts, sports, theater, comedy)
 - **YouTube Music** (ytmusicapi) and **Last.fm** for artist popularity signals (subscriber counts, view counts, listener counts, play counts)
 - **Automated hourly collection** on AWS EC2 (t3.micro, systemd timer) with rsync-based deployment and data sync
+- **Autonomous discovery pipeline** that dynamically generates the artist/event watchlist from Ticketmaster events, VividSeats multi-category browse, and Last.fm chart/tag endpoints — replacing manual curation with zero-maintenance artist discovery
 
 ### Preprocessing Pipeline
 
@@ -51,7 +52,7 @@ An 11-stage composable pipeline where each stage returns structured results (dat
 
 Individual stage failures are logged without aborting the full pipeline. Checkpoint support enables resume from any stage.
 
-### Feature Engineering (67 features, 10 domains; 58 active after zero-variance removal)
+### Feature Engineering (68 features, 10 domains; 62 active after zero-variance removal)
 
 Features are extracted in two stages — base extractors run on raw data, then interaction extractors run on the concatenated base features:
 
@@ -60,7 +61,7 @@ Features are extracted in two stages — base extractors run on raw data, then i
 | Event Pricing | 6 | Event/zone/section-level Bayesian target encoding (**57%+ importance**) |
 | Performer | 8 | Artist historical avg/median price, event count, artist x zone median |
 | Regional | 7 | City/country/global price stats with fallback chain |
-| Event | 9 | City tier, day of week, season, venue capacity, market saturation |
+| Event | 9 | City tier, day of week, season, venue capacity, event type encoding |
 | Popularity | 7 | YouTube + Last.fm normalized score, tier, and data availability flag |
 | Seating | 6 | Zone ordinal encoding, row number, zone price ratio, is_premium |
 | Time Series | 6 | Days to event, urgency buckets (momentum disabled by default) |
@@ -90,18 +91,18 @@ The prediction service produces per-zone price estimates with confidence interva
 
 ## Results
 
-### Model Performance (v30)
+### Model Performance (v32)
 
 | Metric | Value |
 |--------|-------|
-| MAE | $133.86 |
-| MAPE | 40.0% |
-| R² | 0.56 |
-| RMSE | $221.22 |
-| Training samples | ~24,800 |
-| Test samples | ~5,300 |
-| Events | 136 |
-| Artists | 42 |
+| MAE | $149.50 |
+| MAPE | 37.8% |
+| R² | 0.5971 |
+| RMSE | $236.36 |
+| Training samples | ~26,700 |
+| Test samples | ~5,700 |
+| Events | 147 |
+| Artists | 43 |
 
 ### Performance by Price Quartile
 
@@ -123,8 +124,9 @@ The model performs well on the budget-to-premium range most relevant to the "buy
 | v28 | $150.08 | Added EventPricingFeatureExtractor, artist x zone encoding, larger dataset |
 | v29 | $148.27 | Section-level target encoding, venue_price_std, expanded artist aliases, pipeline hardening |
 | v30 | $133.86 | Pipeline serialization, log-transform allowlist fix, artist_venue_price interaction, per-quartile/zone evaluation (**10.9% improvement over v29**) |
+| v32 | $149.50 | GBDT+Huber loss (default), section feature enabled, event type as ML feature, autonomous discovery pipeline, dataset grew to 147 events / 43 artists |
 
-The v18 → v21 improvement came primarily from fixing a data leakage bug (feature pipeline was being fit on the full dataset before splitting) and a zone mapping bug (sections 400–499 misclassified). The v21 → v28 MAE increase reflected dataset growth (81 vs ~40 events). The v29 → v30 improvement ($148.27 → $133.86) came from fixing a log-transform bug that was incorrectly transforming scale-independent features (std, ratio, cv), adding pipeline serialization to eliminate train/serve skew, and introducing the artist_venue_price interaction feature.
+The v18 → v21 improvement came primarily from fixing a data leakage bug (feature pipeline was being fit on the full dataset before splitting) and a zone mapping bug (sections 400–499 misclassified). The v21 → v28 MAE increase reflected dataset growth (81 vs ~40 events). The v29 → v30 improvement ($148.27 → $133.86) came from fixing a log-transform bug that was incorrectly transforming scale-independent features (std, ratio, cv), adding pipeline serialization to eliminate train/serve skew, and introducing the artist_venue_price interaction feature. The v30 → v32 MAE increase ($133.86 → $149.50) reflects the dataset nearly doubling in diversity (136 → 147 events) with MAPE actually improving (40.0% → 37.8%), indicating better generalization despite a harder prediction task.
 
 ## Key Technical Decisions
 
@@ -159,12 +161,12 @@ These findings reinforced that with a small dataset (81 events, 23 artists), sim
 | Scraping | Playwright, playwright-stealth, httpx |
 | Popularity | ytmusicapi, Last.fm API |
 | Infrastructure | AWS EC2 (t3.micro), systemd timers, rsync |
-| Quality | mypy (strict), ruff, pytest (455+ tests), pytest-asyncio |
+| Quality | mypy (strict), ruff, pytest (550+ tests), pytest-asyncio |
 | Package Management | uv |
 
 ## What's Next
 
-- **More data** — the primary bottleneck. The automated EC2 pipeline is continuously expanding the dataset. More events and artists will improve the model's ability to generalize, especially for high-value tickets (Q4 MAE is still 12x worse than Q1).
+- **Expand event categories** — the autonomous discovery pipeline is live and collecting across concerts. VividSeats category probing for sports/theater/comedy IDs will unlock multi-category data collection, with event type already threaded through the ML feature pipeline.
 - **Temporal price trajectories** — modeling how prices evolve over time leading up to an event, rather than point-in-time prediction, to directly identify the buying window.
 - **Cross-validation tuning** — TemporalGroupCV infrastructure is in place for Optuna hyperparameter search. Running CV-based tuning should produce more robust hyperparameters as the dataset grows.
 - **User-facing application** — a lightweight web interface where a user can enter an event and receive a buy/wait recommendation with a confidence level.
