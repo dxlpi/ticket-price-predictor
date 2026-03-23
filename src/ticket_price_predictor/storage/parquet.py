@@ -74,10 +74,18 @@ def read_parquet(
     if not path.exists():
         return None
 
-    # Convert filter tuples to PyArrow filter expressions
-    if filters:
-        return pq.read_table(path, filters=filters)
-    return pq.read_table(path)
+    # Use dataset API with schema unification for Hive-partitioned dirs
+    # where partition columns may have heterogeneous types across fragments
+    import pyarrow.dataset as ds
+
+    try:
+        if filters:
+            return pq.read_table(path, filters=filters)
+        return pq.read_table(path)
+    except pa.lib.ArrowTypeError:
+        dataset = ds.dataset(path, format="parquet", partitioning="hive")
+        table = dataset.to_table(filter=None)
+        return table
 
 
 def append_parquet(

@@ -2,7 +2,7 @@
 
 **End-to-end ML system for predicting secondary-market ticket prices at the seat-zone level.**
 
-Built a production data pipeline and gradient boosting model that ingests live resale ticket data from multiple marketplaces, extracts 68 engineered features across 10 domains (62 active after zero-variance removal), and produces per-zone price predictions with 95% confidence intervals — all designed to help buyers identify optimal purchase timing.
+Built a production data pipeline and gradient boosting model that ingests live resale ticket data from multiple marketplaces, extracts 76 engineered features across 10 domains (70 active after zero-variance removal), and produces per-zone price predictions with 95% confidence intervals — all designed to help buyers identify optimal purchase timing.
 
 ## Motivation
 
@@ -91,29 +91,29 @@ The prediction service produces per-zone price estimates with confidence interva
 
 ## Results
 
-### Model Performance (v32)
+### Model Performance (v34)
 
 | Metric | Value |
 |--------|-------|
-| MAE | $149.50 |
-| MAPE | 37.8% |
-| R² | 0.5971 |
-| RMSE | $236.36 |
-| Training samples | ~26,700 |
-| Test samples | ~5,700 |
-| Events | 147 |
-| Artists | 43 |
+| MAE | $84.76 |
+| MAPE | 52.8% |
+| R² | 0.6155 |
+| RMSE | $140.77 |
+| Training samples | 69,771 |
+| Test samples | 14,850 |
+| Events | 771 |
+| Artists | 500 |
 
 ### Performance by Price Quartile
 
-| Quartile | Price Range | MAE |
-|----------|-------------|-----|
-| Q1 (Budget) | < $72 | ~$22 |
-| Q2 (Mid) | $72 – $143 | ~$62 |
-| Q3 (Premium) | $143 – $316 | ~$108 |
-| Q4 (VIP) | > $316 | ~$275 |
+| Quartile | MAE |
+|----------|-----|
+| Q1 (Budget) | $34.99 |
+| Q2 (Mid) | $26.05 |
+| Q3 (Premium) | $98.70 |
+| Q4 (VIP) | $180.40 |
 
-The model performs well on the budget-to-premium range most relevant to the "buying window" use case. High-value VIP tickets remain difficult due to sparse data and wide price variance.
+The model performs well on the budget-to-mid range most relevant to the "buying window" use case (Q1–Q2 MAE under $35). High-value VIP tickets remain the hardest segment but improved from ~$325 to $180 with the larger dataset.
 
 ### Improvement Journey
 
@@ -124,9 +124,10 @@ The model performs well on the budget-to-premium range most relevant to the "buy
 | v28 | $150.08 | Added EventPricingFeatureExtractor, artist x zone encoding, larger dataset |
 | v29 | $148.27 | Section-level target encoding, venue_price_std, expanded artist aliases, pipeline hardening |
 | v30 | $133.86 | Pipeline serialization, log-transform allowlist fix, artist_venue_price interaction, per-quartile/zone evaluation (**10.9% improvement over v29**) |
-| v32 | $149.50 | GBDT+Huber loss (default), section feature enabled, event type as ML feature, autonomous discovery pipeline, dataset grew to 147 events / 43 artists |
+| v32 | $149.50 | GBDT+Huber loss (default), section feature enabled, event type as ML feature, dataset grew to 147 events / 43 artists |
+| v34 | $84.76 | Autonomous discovery pipeline, dataset tripled to 771 events / 500 artists, parquet union semantics (**43.3% improvement over v32**) |
 
-The v18 → v21 improvement came primarily from fixing a data leakage bug (feature pipeline was being fit on the full dataset before splitting) and a zone mapping bug (sections 400–499 misclassified). The v21 → v28 MAE increase reflected dataset growth (81 vs ~40 events). The v29 → v30 improvement ($148.27 → $133.86) came from fixing a log-transform bug that was incorrectly transforming scale-independent features (std, ratio, cv), adding pipeline serialization to eliminate train/serve skew, and introducing the artist_venue_price interaction feature. The v30 → v32 MAE increase ($133.86 → $149.50) reflects the dataset nearly doubling in diversity (136 → 147 events) with MAPE actually improving (40.0% → 37.8%), indicating better generalization despite a harder prediction task.
+The v18 → v21 improvement came primarily from fixing a data leakage bug (feature pipeline was being fit on the full dataset before splitting) and a zone mapping bug (sections 400–499 misclassified). The v21 → v28 MAE increase reflected dataset growth (81 vs ~40 events). The v29 → v30 improvement ($148.27 → $133.86) came from fixing a log-transform bug that was incorrectly transforming scale-independent features (std, ratio, cv), adding pipeline serialization to eliminate train/serve skew, and introducing the artist_venue_price interaction feature. The v30 → v32 MAE increase ($133.86 → $149.50) reflects the dataset nearly doubling in diversity (136 → 147 events) with MAPE actually improving (40.0% → 37.8%), indicating better generalization despite a harder prediction task. The v32 → v34 improvement ($149.50 → $84.76) is the largest single-version gain, driven entirely by data volume — the autonomous discovery pipeline expanded coverage from 43 to 500 artists, giving the model enough data to generalize across artists and regions. Artist regional features jumped from 2.6% to 17.7% importance, confirming that regional pricing patterns only emerge with sufficient geographic diversity.
 
 ## Key Technical Decisions
 

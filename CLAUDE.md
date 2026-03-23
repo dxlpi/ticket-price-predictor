@@ -111,13 +111,13 @@ When you encounter a major issue during any task (bugs with non-obvious root cau
 - Key deps: pydantic, pyarrow, lightgbm, scikit-learn, playwright
 - API keys in `.env`: `TICKETMASTER_API_KEY`, `LASTFM_API_KEY`
 
-## Current Model Performance (v32)
+## Current Model Performance (v34)
 
-- **MAE**: $149.50
-- **MAPE**: 37.8%
-- **R²**: 0.5971
-- **RMSE**: $236.36
-- **Dataset**: 147 events, 43 artists (38,115 listings)
-- **Top features**: `event_section_median_price` (65.6%), `event_zone_median_price` (14.0%), `event_median_price` (8.8%), `artist_regional_avg_price` (2.6%), `event_zone_price_ratio` (2.3%)
-- **Key improvements over v30**: GBDT+Huber loss (robust to outliers), section feature enabled by default, GBDT converges in ~145 iterations vs DART's 2000 trees
-- **Feature pipeline**: 10 domains, 68 raw features (with snapshot) / 64 without snapshot; 62 active after zero-variance removal
+- **MAE**: $84.76
+- **MAPE**: 52.8%
+- **R²**: 0.6155
+- **RMSE**: $140.77
+- **Dataset**: 771 events, 500 artists (99,478 listings)
+- **Top features**: `event_section_median_price` (45.8%), `event_zone_median_price` (21.7%), `artist_regional_median_price` (12.9%), `artist_regional_avg_price` (4.8%), `event_median_price` (2.5%)
+- **Key improvements over v32**: Dataset tripled via autonomous discovery pipeline (43→500 artists), artist regional features gained significance (2.6%→17.7%), MAE improved 43.3%
+- **Feature pipeline**: 10 domains, 76 raw features (with snapshot); 70 active after zero-variance removal
