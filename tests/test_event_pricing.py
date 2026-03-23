@@ -38,15 +38,16 @@ class TestFeatureNames:
             "event_section_median_price",
             "event_price_iqr",
             "event_price_skewness",
+            "zone_price_range_ratio",
         ]
 
     def test_feature_names_count(self) -> None:
         extractor = EventPricingFeatureExtractor()
-        assert len(extractor.feature_names) == 8
+        assert len(extractor.feature_names) == 9
 
     def test_feature_names_without_section(self) -> None:
         extractor = EventPricingFeatureExtractor(include_section_feature=False)
-        assert len(extractor.feature_names) == 7
+        assert len(extractor.feature_names) == 8
         assert "event_section_median_price" not in extractor.feature_names
 
 
@@ -126,7 +127,7 @@ class TestExtract:
         extractor = EventPricingFeatureExtractor()
         extractor.fit(df)
         result = extractor.extract(df)
-        assert result.shape == (3, 8)
+        assert result.shape == (3, 9)
 
     def test_extract_column_names(self) -> None:
         df = _make_df(["e1", "e1"], [100.0, 200.0])
@@ -347,7 +348,7 @@ class TestMissingColumns:
         extractor = EventPricingFeatureExtractor(include_section_feature=False)
         extractor.fit(df)
         result = extractor.extract(df)
-        assert result.shape == (2, 7)
+        assert result.shape == (2, 8)
         assert not result.isnull().any().any()
 
     def test_missing_artist_column(self) -> None:
@@ -362,7 +363,7 @@ class TestMissingColumns:
             }
         )
         result = extractor.extract(test_df)
-        assert result.shape == (2, 7)
+        assert result.shape == (2, 8)
         assert not result.isnull().any().any()
 
     def test_nan_section_values(self) -> None:
@@ -376,7 +377,7 @@ class TestMissingColumns:
         extractor = EventPricingFeatureExtractor(include_section_feature=False)
         extractor.fit(df)
         result = extractor.extract(df)
-        assert result.shape == (2, 7)
+        assert result.shape == (2, 8)
         assert not result.isnull().any().any()
 
     def test_empty_dataframe_extract(self) -> None:
@@ -385,4 +386,4 @@ class TestMissingColumns:
         extractor.fit(train_df)
         empty_df = pd.DataFrame({"event_id": [], "listing_price": []})
         result = extractor.extract(empty_df)
-        assert result.shape == (0, 7)
+        assert result.shape == (0, 8)

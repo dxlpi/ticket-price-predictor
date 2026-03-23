@@ -427,20 +427,21 @@ class TestModelComparison:
 
 
 class TestLightGBMDefaults:
-    """Tests for LightGBM default params (DART) and GBDT+Huber."""
+    """Tests for LightGBM default params (GBDT+Huber) and legacy DART."""
 
-    def test_default_params_is_dart(self):
-        """DEFAULT_PARAMS uses DART boosting."""
-        assert LightGBMModel.DEFAULT_PARAMS["boosting_type"] == "dart"
+    def test_default_params_is_gbdt_huber(self):
+        """DEFAULT_PARAMS uses GBDT boosting with Huber loss (v32+)."""
+        assert LightGBMModel.DEFAULT_PARAMS["boosting_type"] == "gbdt"
+        assert LightGBMModel.DEFAULT_PARAMS["objective"] == "huber"
 
-    def test_gbdt_params_is_huber(self):
-        """GBDT_PARAMS uses Huber loss objective."""
-        assert LightGBMModel.GBDT_PARAMS["objective"] == "huber"
-        assert LightGBMModel.GBDT_PARAMS["boosting_type"] == "gbdt"
+    def test_dart_params_is_legacy(self):
+        """DART_PARAMS uses DART boosting with regression/l2 (legacy)."""
+        assert LightGBMModel.DART_PARAMS["objective"] == "regression"
+        assert LightGBMModel.DART_PARAMS["boosting_type"] == "dart"
 
-    def test_dart_default_never_uses_huber(self):
-        """DART+Huber causes catastrophic overfitting — DEFAULT must not use Huber."""
-        assert LightGBMModel.DEFAULT_PARAMS["objective"] != "huber", (
+    def test_dart_never_uses_huber(self):
+        """DART+Huber causes catastrophic overfitting — DART_PARAMS must not use Huber."""
+        assert LightGBMModel.DART_PARAMS["objective"] != "huber", (
             "DART+Huber causes catastrophic overfitting — must use regression/l2"
         )
 
@@ -466,8 +467,8 @@ class TestLightGBMDefaults:
         assert len(preds) == 20
         assert all(np.isfinite(p) for p in preds)
 
-    def test_gbdt_params_trains(self):
-        """GBDT_PARAMS still trains and produces finite predictions."""
+    def test_dart_params_trains(self):
+        """DART_PARAMS (legacy) still trains and produces finite predictions."""
         np.random.seed(42)
         n = 100
         X = pd.DataFrame(
@@ -478,7 +479,7 @@ class TestLightGBMDefaults:
         )
         y = pd.Series(100 + 20 * X["feature1"] + np.random.randn(n) * 5)
 
-        params = dict(LightGBMModel.GBDT_PARAMS)
+        params = dict(LightGBMModel.DART_PARAMS)
         params["n_estimators"] = 50  # fast for tests
 
         model = LightGBMModel(params=params)

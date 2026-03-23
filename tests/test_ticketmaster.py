@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+pytest.importorskip("pytest_asyncio")
+
 from ticket_price_predictor.api.ticketmaster import (
     RateLimitError,
     TicketmasterClient,

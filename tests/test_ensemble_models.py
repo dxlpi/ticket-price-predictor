@@ -2,11 +2,16 @@
 
 Tests XGBoost, CatBoost, stacking ensemble, residual model,
 and custom asymmetric loss functions.
+
+Requires optional dependencies: xgboost, catboost.
 """
 
 import numpy as np
 import pandas as pd
 import pytest
+
+pytest.importorskip("xgboost")
+pytest.importorskip("catboost")
 
 from ticket_price_predictor.ml.models.base import PriceModel
 from ticket_price_predictor.ml.models.catboost_model import CatBoostModel
@@ -92,7 +97,15 @@ class TestXGBoostModel:
     def test_feature_importance(self, sample_data):
         """Test feature importance."""
         X, y = sample_data
-        model = XGBoostModel(params={"n_estimators": 50, "verbosity": 0})
+        # Use small-data-friendly params: min_child_weight=1 so splits occur
+        # on 200 samples (DEFAULT_PARAMS uses 20, tuned for 38K production rows)
+        params = {
+            "n_estimators": 50,
+            "verbosity": 0,
+            "min_child_weight": 1,
+            "objective": "reg:squarederror",
+        }
+        model = XGBoostModel(params=params)
         model.fit(X[:200], y[:200])
 
         importance = model.get_feature_importance()

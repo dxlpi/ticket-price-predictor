@@ -32,6 +32,8 @@ class TestFeatureNames:
     def test_feature_names_correct(self) -> None:
         extractor = RelativePricingFeatureExtractor()
         assert extractor.feature_names == [
+            "section_price_deviation",
+            "zone_price_deviation",
             "section_zone_residual",
             "zone_event_residual",
             "event_artist_residual",
@@ -39,7 +41,7 @@ class TestFeatureNames:
 
     def test_feature_names_count(self) -> None:
         extractor = RelativePricingFeatureExtractor()
-        assert len(extractor.feature_names) == 3
+        assert len(extractor.feature_names) == 5
 
 
 class TestFitStats:
@@ -104,7 +106,7 @@ class TestExtract:
         extractor = RelativePricingFeatureExtractor()
         extractor.fit(df)
         result = extractor.extract(df)
-        assert result.shape == (3, 3)
+        assert result.shape == (3, 5)
 
     def test_extract_column_names(self) -> None:
         df = _make_df(["e1", "e1"], [100.0, 200.0])
@@ -270,4 +272,4 @@ class TestFallbackChain:
         extractor.fit(train_df)
         empty_df = pd.DataFrame({"event_id": [], "listing_price": []})
         result = extractor.extract(empty_df)
-        assert result.shape == (0, 3)
+        assert result.shape == (0, 5)
