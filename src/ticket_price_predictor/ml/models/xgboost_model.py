@@ -7,7 +7,11 @@ import joblib
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-import xgboost as xgb
+
+try:
+    import xgboost as xgb  # type: ignore[import-not-found,unused-ignore]
+except ImportError:
+    xgb = None  # type: ignore[assignment,unused-ignore]
 
 from ticket_price_predictor.ml.models.base import PriceModel
 
@@ -45,6 +49,8 @@ class XGBoostModel(PriceModel):
         Args:
             params: XGBoost parameters (merged with defaults)
         """
+        if xgb is None:
+            raise ImportError("xgboost is required: pip install xgboost")
         self._params = {**self.DEFAULT_PARAMS, **(params or {})}
         self._model: xgb.XGBRegressor | None = None
         self._fitted = False

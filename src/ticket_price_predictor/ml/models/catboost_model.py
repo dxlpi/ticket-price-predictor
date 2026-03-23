@@ -7,7 +7,11 @@ import joblib
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-from catboost import CatBoostRegressor  # type: ignore[import-not-found,unused-ignore]
+
+try:
+    from catboost import CatBoostRegressor  # type: ignore[import-not-found,unused-ignore]
+except ImportError:
+    CatBoostRegressor = None  # type: ignore[assignment,misc,unused-ignore]
 
 from ticket_price_predictor.ml.models.base import PriceModel
 
@@ -45,6 +49,8 @@ class CatBoostModel(PriceModel):
         Args:
             params: CatBoost parameters (merged with defaults)
         """
+        if CatBoostRegressor is None:
+            raise ImportError("catboost is required: pip install catboost")
         self._params = {**self.DEFAULT_PARAMS, **(params or {})}
         self._model: CatBoostRegressor | None = None
         self._fitted = False
