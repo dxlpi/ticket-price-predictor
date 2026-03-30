@@ -121,3 +121,11 @@ When you encounter a major issue during any task (bugs with non-obvious root cau
 - **Top features**: `event_section_median_price` (45.8%), `event_zone_median_price` (21.7%), `artist_regional_median_price` (12.9%), `artist_regional_avg_price` (4.8%), `event_median_price` (2.5%)
 - **Key improvements over v32**: Dataset tripled via autonomous discovery pipeline (43→500 artists), artist regional features gained significance (2.6%→17.7%), MAE improved 43.3%
 - **Feature pipeline**: 10 domains, 76 raw features (with snapshot); 70 active after zero-variance removal
+
+## Sale Probability Model (CVR v3)
+
+- **AUC-ROC**: 0.7653
+- **ECE**: 0.1525
+- **Best iteration**: 1830
+- **Label strategy**: Inventory depletion (30% threshold, 48h window, ~20% positive rate)
+- **Top features**: `days_to_event` (21.8%), `days_to_event_squared` (10.8%), `event_listing_count` (7.7%), `day_of_week` (5.5%), `artist_regional_listing_count` (4.8%)

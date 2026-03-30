@@ -1,12 +1,12 @@
 # Ticket Price Predictor
 
-**End-to-end ML system for predicting secondary-market ticket prices at the seat-zone level.**
+**End-to-end ML system for ticket price prediction, listing value ranking, and sale probability estimation — demonstrating the core modeling patterns of commerce recommendation systems: CTR/CVR prediction, value-based ranking, and iterative offline experimentation.**
 
 Built a production data pipeline and gradient boosting model that ingests live resale ticket data from multiple marketplaces, extracts 76 engineered features across 10 domains (70 active after zero-variance removal), and produces per-zone price predictions with 95% confidence intervals — all designed to help buyers identify optimal purchase timing.
 
 ## Motivation
 
-This project started from my own experience buying resale concert tickets and the lack of a clear, quantitative basis for deciding: *"Should I wait two more days for a lower price, or buy now?"* Price-drop patterns vary significantly depending on the artist, seat location, city, and time-to-event. Simple signals like average price or current lowest price are not sufficient to forecast future prices.
+This project started from my own experience buying resale concert tickets and the lack of a clear, quantitative basis for deciding: *"Should I wait two more days for a lower price, or buy now?"* Price-drop patterns vary significantly depending on the artist, seat location, city, and time-to-event. Simple signals like average price or current lowest price are not sufficient to forecast future prices. This decision — buy now or wait? — is structurally analogous to the conversion optimization problem in commerce recommendation: given a product's predicted fair value and the user's context, predict whether a purchase will occur and surface the best value options first.
 
 The goal: develop a system that predicts a **stable buying window** — a purchase timing where ticket prices are low enough while a reasonable range of seats is still available.
 
@@ -23,7 +23,7 @@ Preprocessing         11-stage composable pipeline (validate → normalize → e
                                        |
 Feature Engineering   10 extractor domains, 68 features (62 active), two-stage pipeline
                                        |
-ML Pipeline           LightGBM (GBDT/DART) + Quantile regression → price + 95% CI
+ML Pipeline           LightGBM (GBDT/DART) + Quantile regression → price + 95% CI | ListingRanker → value score + ranking | SaleProbabilityModel → sale probability (CVR analogue)
 ```
 
 ### Data Collection
@@ -54,7 +54,7 @@ Individual stage failures are logged without aborting the full pipeline. Checkpo
 
 ### Feature Engineering (68 features, 10 domains; 62 active after zero-variance removal)
 
-Features are extracted in two stages — base extractors run on raw data, then interaction extractors run on the concatenated base features:
+Features are extracted in two stages and serve dual purpose — informing both the price prediction model and the sale-probability (CVR) classifier:
 
 | Domain | Features | Key Signals |
 |--------|----------|-------------|
@@ -87,7 +87,7 @@ The central invariant: **raw data is split temporally before any feature extract
 
 ### Inference
 
-The prediction service produces per-zone price estimates with confidence intervals and a directional signal (UP / DOWN / STABLE). A cold-start fallback handles unseen artists using popularity tier lookups and configurable zone defaults. At save time, the fitted feature pipeline and log-transformed column list are serialized as companion files alongside the model, ensuring inference replicates exact training-time feature statistics.
+The prediction service produces per-zone price estimates with confidence intervals and a directional signal (UP / DOWN / STABLE). A ListingRanker wraps the price predictor to score and rank listings by value score (predicted fair price / actual price) — surfacing the best-value listings first, analogous to product ranking by predicted conversion value. A SaleProbabilityModel (AUC 0.77) predicts whether a listing will sell within a 48-hour window using event-level inventory depletion from snapshot data as the conversion signal (CVR analogue). The original disappearance-based labels produced AUC 0.48 due to a cross-event timestamp contamination bug (99% sold ratio); redesigning label construction around aggregate inventory depletion yielded a healthy 20% positive rate and meaningful signal. A cold-start fallback handles unseen artists using popularity tier lookups and configurable zone defaults. At save time, the fitted feature pipeline and log-transformed column list are serialized as companion files alongside the model, ensuring inference replicates exact training-time feature statistics.
 
 ## Results
 
@@ -117,15 +117,18 @@ The model performs well on the budget-to-mid range most relevant to the "buying 
 
 ### Improvement Journey
 
-| Version | MAE | What Changed |
-|---------|-----|-------------|
-| v18 | $216.88 | Baseline before systematic improvements |
-| v21 | $141.95 | Fixed data leakage, zone mapping bug, artist normalization (**34.6% improvement**) |
-| v28 | $150.08 | Added EventPricingFeatureExtractor, artist x zone encoding, larger dataset |
-| v29 | $148.27 | Section-level target encoding, venue_price_std, expanded artist aliases, pipeline hardening |
-| v30 | $133.86 | Pipeline serialization, log-transform allowlist fix, artist_venue_price interaction, per-quartile/zone evaluation (**10.9% improvement over v29**) |
-| v32 | $149.50 | GBDT+Huber loss (default), section feature enabled, event type as ML feature, dataset grew to 147 events / 43 artists |
-| v34 | $84.76 | Autonomous discovery pipeline, dataset tripled to 771 events / 500 artists, parquet union semantics (**43.3% improvement over v32**) |
+| Version | Hypothesis | Method | Result | Decision |
+|---------|-----------|--------|--------|----------|
+| v18 | Baseline | Initial LightGBM pipeline | MAE $216.88 | Baseline |
+| v21 | Feature pipeline fitted before split causes leakage | Fixed leakage, zone mapping bug, artist normalization | MAE $141.95 (**34.6% improvement**) | Keep — made split-before-fit an architectural invariant |
+| v28 | Section-level target encoding adds pricing granularity | Added EventPricingFeatureExtractor, artist x zone encoding | MAE $150.08 | Keep — higher MAE reflects 2x larger, harder dataset |
+| v29 | Bayesian smoothing makes section encoding robust | Bayesian-smoothed section encoding, venue_price_std, expanded aliases | MAE $148.27 | Keep — section encoding now 55.6% importance |
+| v30 | Log-transform bug inflates scale-independent features | Fixed log-transform allowlist, added pipeline serialization, artist_venue_price | MAE $133.86 (**10.9% improvement**) | Keep — eliminated train/serve skew |
+| v32 | GBDT+Huber converges faster and generalizes better than DART+L2 | Switched default to GBDT+Huber | MAE $149.50, MAPE 37.8% | Keep — 50x faster training, better MAPE despite larger dataset |
+| v34 | Model underfits due to insufficient artist diversity | Autonomous discovery pipeline, 43→500 artists | MAE $84.76 (**43.3% improvement**) | Keep — regional features jumped from 2.6% to 17.7% importance |
+| CVR v3 | Disappearance-based CVR labels broken (AUC 0.48, 99% sold ratio) | Redesigned labels using inventory depletion from snapshot data; fixed early stopping (logloss over AUC) | AUC **0.77**, ECE 0.15 | Keep — top features (days_to_event, event_listing_count) match commerce CVR intuition |
+
+**Methodology**: Each version represents a hypothesis about the root cause of prediction error, tested with offline metrics and accepted/rejected based on quantitative evidence. Improvements that hurt MAE were reverted regardless of theoretical appeal.
 
 The v18 → v21 improvement came primarily from fixing a data leakage bug (feature pipeline was being fit on the full dataset before splitting) and a zone mapping bug (sections 400–499 misclassified). The v21 → v28 MAE increase reflected dataset growth (81 vs ~40 events). The v29 → v30 improvement ($148.27 → $133.86) came from fixing a log-transform bug that was incorrectly transforming scale-independent features (std, ratio, cv), adding pipeline serialization to eliminate train/serve skew, and introducing the artist_venue_price interaction feature. The v30 → v32 MAE increase ($133.86 → $149.50) reflects the dataset nearly doubling in diversity (136 → 147 events) with MAPE actually improving (40.0% → 37.8%), indicating better generalization despite a harder prediction task. The v32 → v34 improvement ($149.50 → $84.76) is the largest single-version gain, driven entirely by data volume — the autonomous discovery pipeline expanded coverage from 43 to 500 artists, giving the model enough data to generalize across artists and regions. Artist regional features jumped from 2.6% to 17.7% importance, confirming that regional pricing patterns only emerge with sufficient geographic diversity.
 
@@ -141,7 +144,9 @@ The v18 → v21 improvement came primarily from fixing a data leakage bug (featu
 
 **Frozen configuration as single source of truth.** All 40+ magic numbers (cold-start defaults, smoothing factors, tier multipliers, capacity buckets) live in a single frozen dataclass (`MLConfig`) rather than scattered across modules.
 
-## Lessons from Ablation Studies
+## Offline Experiment Results
+
+The following experiments were run, measured against offline MAE/MAPE, and decisions made based on evidence rather than intuition:
 
 Several intuitive improvements actually hurt performance, documented in the project's issue tracker:
 
@@ -158,16 +163,14 @@ These findings reinforced that with a small dataset (81 events, 23 artists), sim
 |-------|-----------|
 | Language | Python 3.12 |
 | ML | LightGBM, scikit-learn, Optuna |
+| Classification | LightGBM binary (sale probability, AUC 0.77) |
 | Data | Pydantic v2, PyArrow, Parquet (Hive-partitioned) |
 | Scraping | Playwright, playwright-stealth, httpx |
 | Popularity | ytmusicapi, Last.fm API |
 | Infrastructure | AWS EC2 (t3.micro), systemd timers, rsync |
-| Quality | mypy (strict), ruff, pytest (550+ tests), pytest-asyncio |
+| Quality | mypy (strict), ruff, pytest (656 tests), pytest-asyncio |
 | Package Management | uv |
 
 ## What's Next
 
-- **Expand event categories** — the autonomous discovery pipeline is live and collecting across concerts. VividSeats category probing for sports/theater/comedy IDs will unlock multi-category data collection, with event type already threaded through the ML feature pipeline.
-- **Temporal price trajectories** — modeling how prices evolve over time leading up to an event, rather than point-in-time prediction, to directly identify the buying window.
-- **Cross-validation tuning** — TemporalGroupCV infrastructure is in place for Optuna hyperparameter search. Running CV-based tuning should produce more robust hyperparameters as the dataset grows.
-- **User-facing application** — a lightweight web interface where a user can enter an event and receive a buy/wait recommendation with a confidence level.
+Remaining priorities: temporal price trajectories, cross-validation tuning, and a user-facing recommendation interface.
