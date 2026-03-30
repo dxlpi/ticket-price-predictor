@@ -420,9 +420,8 @@ class InventoryDepletionLabeler:
         # Join future inventory back to obs DataFrame on (event_id, original timestamp).
         # Deduplicate on (event_id, timestamp) to prevent M:M join — multiple listings
         # sharing the same scrape timestamp get the same inv_at_future value.
-        future_lookup = (
-            merged_future[["event_id", "timestamp", "inv_at_future"]]
-            .drop_duplicates(subset=["event_id", "timestamp"])
+        future_lookup = merged_future[["event_id", "timestamp", "inv_at_future"]].drop_duplicates(
+            subset=["event_id", "timestamp"]
         )
         result = merged_obs.merge(future_lookup, on=["event_id", "timestamp"], how="left")
 

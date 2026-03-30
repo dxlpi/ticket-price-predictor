@@ -140,7 +140,11 @@ class SaleProbabilityModel(PriceModel):
 
         callbacks: list[Any] = []
         if X_val is not None:
-            callbacks.append(lgb.early_stopping(stopping_rounds=int(early_stopping_rounds), first_metric_only=True))
+            callbacks.append(
+                lgb.early_stopping(
+                    stopping_rounds=int(early_stopping_rounds), first_metric_only=True
+                )
+            )
         callbacks.append(lgb.log_evaluation(period=100))
 
         self._model = lgb.train(
