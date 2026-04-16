@@ -19,7 +19,9 @@ Usage:
 import asyncio
 import json
 import time
+from collections import Counter
 from datetime import UTC, datetime
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 
@@ -272,26 +274,38 @@ async def get_popular_events(
     # Load artists from config file, organized by tier
     watchlist = load_artist_watchlist()
 
-    # Build flat performer list with tier-based event limits
-    performer_configs: list[tuple[str, int]] = []
+    # Build per-tier configs, preserving tier for downstream round-robin interleave
+    configs_by_tier: dict[str, list[tuple[str, int]]] = {}
     for tier, artists in watchlist.items():
         events_per_artist = TIER_EVENT_LIMITS.get(tier, 1)
-        for artist in artists:
-            performer_configs.append((artist, events_per_artist))
+        configs_by_tier[tier] = [(a, events_per_artist) for a in artists]
 
-    total_artists = len(performer_configs)
-    print(f"  Loaded {total_artists} artists from watchlist across {len(watchlist)} tiers")
+    total_artists = sum(len(v) for v in configs_by_tier.values())
+    print(f"  Loaded {total_artists} artists from watchlist across {len(configs_by_tier)} tiers")
 
-    # Use popularity service to re-rank within tiers if available
+    # Use popularity service to re-rank WITHIN tiers (preserves tier membership).
+    # Lookup via lower-cased keys because rank_performers may canonicalise casing.
     if popularity_service:
-        all_names = [name for name, _ in performer_configs]
-        ranked = popularity_service.rank_performers(all_names)
-        # Rebuild configs with ranked order but keep tier-based limits
-        tier_limits = {name.lower(): limit for name, limit in performer_configs}
-        performer_configs = [
-            (p.name, tier_limits.get(p.name.lower(), 1)) for p in ranked
-        ]
-        print(f"  Re-ranked by popularity: {len(performer_configs)} performers")
+        for tier, tier_configs in configs_by_tier.items():
+            names = [name for name, _ in tier_configs]
+            limit_map = {name.lower(): limit for name, limit in tier_configs}
+            ranked = popularity_service.rank_performers(names)
+            configs_by_tier[tier] = [
+                (p.name, limit_map.get(p.name.lower(), 1)) for p in ranked
+            ]
+        print(f"  Re-ranked by popularity within tiers ({total_artists} performers)")
+
+    # Round-robin interleave across tiers so budget truncation stays
+    # tier-proportional instead of cutting entire late tiers off the tail.
+    tier_order = list(configs_by_tier.keys())
+    tier_lists = [configs_by_tier[t] for t in tier_order]
+    performer_configs: list[tuple[str, int, str]] = []
+    for row in zip_longest(*tier_lists, fillvalue=None):
+        for t_idx, item in enumerate(row):
+            if item is None:
+                continue
+            name, limit = item
+            performer_configs.append((name, limit, tier_order[t_idx]))
 
     events: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
@@ -325,14 +339,23 @@ async def get_popular_events(
     # === Phase 1: Watchlist searches ===
     print("\n  Phase 1: Watchlist artist searches...")
     async with VividSeatsScraper(headless=True, delay_seconds=2.0) as scraper:
-        for performer_name, events_to_collect in performer_configs:
+        for idx, (performer_name, events_to_collect, _tier) in enumerate(performer_configs):
             if len(events) >= max_events:
                 break
 
-            # Time budget check
+            # Time budget check — log what is being dropped so anomaly days are diagnosable.
             elapsed = time.monotonic() - start_time
             if elapsed > TIME_BUDGET_SECONDS:
-                print(f"  Time budget reached ({elapsed:.0f}s). Stopping watchlist search.")
+                skipped = performer_configs[idx:]
+                tier_counts = Counter(t for _, _, t in skipped)
+                print(
+                    f"  Time budget reached ({elapsed:.0f}s). "
+                    f"Processed {idx}/{len(performer_configs)} artists."
+                )
+                print(f"  Skipped {len(skipped)} artists by tier: {dict(tier_counts)}")
+                if skipped:
+                    sample_names = ", ".join(a for a, _, _ in skipped[:10])
+                    print(f"  First skipped: {sample_names}")
                 break
 
             # Circuit breaker
@@ -740,11 +763,15 @@ async def main() -> None:
     print("=" * 60)
 
     repo = ListingRepository(data_dir)
-    all_listings = repo.get_listings()
     event_ids = repo.list_event_ids()
 
+    listings_root = data_dir / "raw" / "listings"
+    partition_count = (
+        len(list(listings_root.rglob("*.parquet"))) if listings_root.exists() else 0
+    )
+
     print(f"Total events being monitored: {len(event_ids)}")
-    print(f"Total listings in database: {len(all_listings)}")
+    print(f"Total listing partitions: {partition_count}")
 
     print(f"\nCompleted at: {datetime.now(UTC).isoformat()}")
 
