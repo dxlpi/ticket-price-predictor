@@ -16,6 +16,7 @@ from ticket_price_predictor.ml.models.catboost_model import CatBoostModel
 from ticket_price_predictor.ml.models.lightgbm_model import LightGBMModel, QuantileLightGBMModel
 from ticket_price_predictor.ml.models.residual import ResidualModel
 from ticket_price_predictor.ml.models.stacking import StackingEnsemble
+from ticket_price_predictor.ml.models.stacking_v2 import StackingEnsembleV2
 from ticket_price_predictor.ml.models.xgboost_model import XGBoostModel
 from ticket_price_predictor.ml.schemas import TrainingMetrics
 from ticket_price_predictor.ml.training.evaluator import ModelEvaluator
@@ -26,7 +27,14 @@ from ticket_price_predictor.ml.training.target_transforms import (
 )
 
 ModelType = Literal[
-    "baseline", "lightgbm", "quantile", "xgboost", "catboost", "stacking", "residual"
+    "baseline",
+    "lightgbm",
+    "quantile",
+    "xgboost",
+    "catboost",
+    "stacking",
+    "stacking_v2",
+    "residual",
 ]
 
 OutlierStrategy = Literal["global_p95", "zone_winsorize", "none"]
@@ -262,6 +270,8 @@ class ModelTrainer:
             return CatBoostModel(params=params) if params else CatBoostModel()
         elif self._model_type == "stacking":
             return StackingEnsemble()
+        elif self._model_type == "stacking_v2":
+            return StackingEnsembleV2()
         elif self._model_type == "residual":
             return ResidualModel()
         else:
@@ -519,6 +529,13 @@ class ModelTrainer:
         start_time = time.time()
 
         self._model = self._create_model(params=params)
+
+        # stacking_v2 needs explicit timestamps because upstream artist-stratified
+        # splitter does not produce globally time-sorted rows.
+        extra_fit_kwargs: dict[str, Any] = {}
+        if self._model_type == "stacking_v2" and "timestamp" in train_df.columns:
+            extra_fit_kwargs["timestamps"] = train_df["timestamp"]
+
         try:
             self._model.fit(  # type: ignore[call-arg]
                 X_train,
@@ -526,6 +543,7 @@ class ModelTrainer:
                 X_val,
                 pd.Series(y_val),
                 sample_weight=sample_weight,
+                **extra_fit_kwargs,
             )
         except TypeError:
             # Model does not support sample_weight (e.g. BaselineModel) — fit without it
@@ -1022,6 +1040,8 @@ class ModelTrainer:
             return CatBoostModel.load(model_path)
         elif model_type == "stacking":
             return StackingEnsemble.load(model_path)
+        elif model_type == "stacking_v2":
+            return StackingEnsembleV2.load(model_path)
         elif model_type == "residual":
             return ResidualModel.load(model_path)
         else:
