@@ -30,3 +30,50 @@ for col in snap_output_cols:
 for col in snap_output_cols:
     merged[col] = merged[col].fillna(0.0)
 ```
+
+---
+
+## Rule 2 — Global sort on `on` column, not multi-column sort
+
+`pd.merge_asof` requires the `on` column (e.g. `timestamp`) to be **globally sorted** across the entire DataFrame. Sorting by `["event_id", "timestamp"]` does NOT satisfy this — it sorts within each event group but not globally, causing `ValueError: left keys must be sorted`.
+
+## Why
+The `by=` parameter handles per-group matching at merge time. The `on=` column must be monotonically increasing across all rows.
+
+## Pattern
+
+```python
+# Right: sort globally by the on-column only
+df = df.sort_values("timestamp").reset_index(drop=True)
+event_snapshots = event_snapshots.sort_values("timestamp").reset_index(drop=True)
+merged = pd.merge_asof(df, event_snapshots, by="event_id", on="timestamp", direction="backward")
+
+# Wrong: multi-column sort breaks the global monotonicity requirement
+df = df.sort_values(["event_id", "timestamp"])  # NOT globally sorted on timestamp
+```
+
+---
+
+## Rule 3 — Deduplicate lookup before left-merging back
+
+When using `merge_asof` to look up values (e.g. `inv_at_future`) and then joining that result back to the original DataFrame by `(event_id, timestamp)`, multiple listings sharing the same scrape timestamp cause M:M row inflation unless the lookup is deduplicated first.
+
+## Why
+`merge_asof` produces one output row per left-side row. When you then left-merge this back onto a DataFrame where multiple rows share the same join key `(event_id, timestamp)`, each lookup row fans out to all matching left rows — multiplying the DataFrame.
+
+## Pattern
+
+```python
+# Right: deduplicate lookup on join keys before merging back
+future_lookup = (
+    merged_future[["event_id", "timestamp", "inv_at_future"]]
+    .drop_duplicates(subset=["event_id", "timestamp"])
+)
+result = merged_obs.merge(future_lookup, on=["event_id", "timestamp"], how="left")
+
+# Wrong: merging without dedup causes row count inflation
+result = merged_obs.merge(
+    merged_future[["event_id", "timestamp", "inv_at_future"]],
+    on=["event_id", "timestamp"], how="left"
+)
+```

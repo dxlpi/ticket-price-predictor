@@ -36,6 +36,9 @@ ml = [
     "matplotlib>=3.8.0",
     "seaborn>=0.13.0",
 ]
+neural = [
+    "pytorch-tabular>=1.1.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -89,6 +92,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["ytmusicapi", "ytmusicapi.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pytorch_tabular", "pytorch_tabular.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

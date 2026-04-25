@@ -67,6 +67,33 @@ class PricePrediction(BaseModel):
         )
 
 
+class RankedListing(BaseModel):
+    """A listing ranked by predicted value relative to its asking price.
+
+    Used by ListingRanker to surface underpriced listings (value_score > 1.0).
+    Analogous to ranked item scoring in commerce recommendation systems.
+    """
+
+    event_id: str = Field(..., description="Event identifier")
+    listing_id: str | None = Field(None, description="Listing identifier from marketplace")
+    section: str = Field(..., description="Seat section")
+    row: str = Field(..., description="Seat row")
+    listing_price: float = Field(..., ge=0, description="Actual asking price")
+    predicted_fair_price: float = Field(
+        ..., ge=0, description="Model's predicted fair market price"
+    )
+    value_score: float = Field(
+        ..., description="predicted_fair_price / listing_price. >1.0 means underpriced (good value)"
+    )
+    savings_estimate: float = Field(
+        ..., description="predicted_fair_price - listing_price. Positive means potential savings"
+    )
+    confidence_score: float = Field(
+        ..., ge=0, le=1, description="Price prediction confidence (from PricePrediction)"
+    )
+    rank: int = Field(..., ge=1, description="Rank position (1 = best value)")
+
+
 class TrainingMetrics(BaseModel):
     """Metrics from model training and evaluation."""
 
@@ -89,6 +116,17 @@ class TrainingMetrics(BaseModel):
     # Direction classification metrics (optional)
     direction_accuracy: float | None = Field(
         None, ge=0, le=1, description="Accuracy of direction prediction"
+    )
+
+    # Classification metrics (sale probability model)
+    auc_roc: float | None = Field(None, ge=0, le=1, description="AUC-ROC for binary classifier")
+    precision: float | None = Field(
+        None, ge=0, le=1, description="Precision at default threshold (0.5)"
+    )
+    recall: float | None = Field(None, ge=0, le=1, description="Recall at default threshold (0.5)")
+    f1: float | None = Field(None, ge=0, le=1, description="F1 score at default threshold (0.5)")
+    calibration_error: float | None = Field(
+        None, ge=0, description="Expected calibration error (ECE)"
     )
 
     # Training info

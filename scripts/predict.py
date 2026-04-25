@@ -8,11 +8,12 @@ Usage:
 """
 
 import argparse
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ticket_price_predictor.ml.inference import UnknownEventError
 from ticket_price_predictor.ml.inference.predictor import PricePredictor
-from ticket_price_predictor.ml.training.trainer import ModelTrainer
 from ticket_price_predictor.normalization.seat_zones import SeatZone
 
 
@@ -118,8 +119,7 @@ def main() -> None:
 
     # Load model
     print(f"Loading model from: {args.model_path}")
-    model = ModelTrainer.load(args.model_path, args.model_type)  # type: ignore
-    predictor = PricePredictor(model, model_version="v1")
+    predictor = PricePredictor.from_path(args.model_path, args.model_type)
 
     # Event datetime
     event_datetime = datetime.now() + timedelta(days=args.days_ahead)
@@ -137,15 +137,19 @@ def main() -> None:
         print("Predictions by zone:")
         print("-" * 50)
 
-        predictions = predictor.predict_for_zones(
-            event_id=args.event_id,
-            artist_or_team=args.artist,
-            venue_name=args.venue,
-            city=args.city,
-            event_datetime=event_datetime,
-            days_to_event=args.days_ahead,
-            event_type=args.event_type,
-        )
+        try:
+            predictions = predictor.predict_for_zones(
+                event_id=args.event_id,
+                artist_or_team=args.artist,
+                venue_name=args.venue,
+                city=args.city,
+                event_datetime=event_datetime,
+                days_to_event=args.days_ahead,
+                event_type=args.event_type,
+            )
+        except UnknownEventError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(2)
 
         for zone, pred in predictions.items():
             print(
@@ -159,17 +163,21 @@ def main() -> None:
         print(f"Section: {args.section}, Row: {args.row}")
         print("-" * 50)
 
-        pred = predictor.predict(
-            event_id=args.event_id,
-            artist_or_team=args.artist,
-            venue_name=args.venue,
-            city=args.city,
-            event_datetime=event_datetime,
-            section=args.section,
-            row=args.row,
-            days_to_event=args.days_ahead,
-            event_type=args.event_type,
-        )
+        try:
+            pred = predictor.predict(
+                event_id=args.event_id,
+                artist_or_team=args.artist,
+                venue_name=args.venue,
+                city=args.city,
+                event_datetime=event_datetime,
+                section=args.section,
+                row=args.row,
+                days_to_event=args.days_ahead,
+                event_type=args.event_type,
+            )
+        except UnknownEventError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(2)
 
         print()
         print(f"Predicted Price: ${pred.predicted_price:.2f}")

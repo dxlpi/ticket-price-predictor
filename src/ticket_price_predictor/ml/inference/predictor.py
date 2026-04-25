@@ -1,6 +1,7 @@
 """Price prediction service."""
 
 import json
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,10 @@ from ticket_price_predictor.normalization.seat_zones import SeatZone
 _config = get_ml_config()
 
 
+class UnknownEventError(ValueError):
+    """Raised when predict() is called for an event not in the training corpus."""
+
+
 class PricePredictor:
     """Service for making price predictions."""
 
@@ -30,6 +35,7 @@ class PricePredictor:
         cold_start_handler: ColdStartHandler | None = None,
         popularity_service: Any | None = None,
         fitted_pipeline: FeaturePipeline | None = None,
+        known_events: set[str] | None = None,
         log_transformed_cols: list[str] | None = None,
     ) -> None:
         """Initialize predictor.
@@ -42,6 +48,10 @@ class PricePredictor:
             fitted_pipeline: Loaded fitted FeaturePipeline from ModelTrainer.save().
                 When provided, predictions use the training-time statistics. When None,
                 an unfitted pipeline is created (backward-compatible, cold-start only).
+            known_events: Set of event_ids present in the training corpus. When set,
+                predict() raises UnknownEventError for any event_id not in the set
+                (gate runs before feature extraction). When None, the gate is disabled
+                (legacy/test path).
             log_transformed_cols: List of feature columns that were log-transformed
                 during training. Loaded from _meta.json by from_path(). When not None,
                 these transforms are replicated at inference and predictions are
@@ -50,6 +60,7 @@ class PricePredictor:
         self._model = model
         self._model_version = model_version
         self._cold_start = cold_start_handler or ColdStartHandler()
+        self._known_events: set[str] | None = known_events
         self._log_transformed_cols = log_transformed_cols  # None = old model, no meta file
 
         if fitted_pipeline is not None:
@@ -107,14 +118,31 @@ class PricePredictor:
         if pipeline_path.exists():
             fitted_pipeline = FeaturePipeline.load(pipeline_path)
 
+        known_events: set[str] | None = None
+        warning_msg: str | None = None
+
         if meta_path.exists():
             meta = json.loads(meta_path.read_text())
             log_transformed_cols = meta.get("log_transformed_cols")
+            raw_known = meta.get("known_events")
+            if raw_known is not None:
+                known_events = set(raw_known)
+            else:
+                warning_msg = (
+                    f"Model meta at {meta_path} has no 'known_events' field; "
+                    "inference gate disabled (legacy artifact). Re-train to enable scope checking."
+                )
+        else:
+            warning_msg = f"No meta file at {meta_path}; inference gate disabled (legacy artifact)."
+
+        if warning_msg is not None:
+            warnings.warn(warning_msg, UserWarning, stacklevel=2)
 
         return cls(
             model,
             model_version,
             fitted_pipeline=fitted_pipeline,
+            known_events=known_events,
             log_transformed_cols=log_transformed_cols,
         )
 
@@ -147,7 +175,15 @@ class PricePredictor:
 
         Returns:
             PricePrediction object
+
+        Raises:
+            UnknownEventError: When `event_id` is not in the training corpus.
         """
+        event_id = str(event_id)
+        if self._known_events is not None and event_id not in self._known_events:
+            raise UnknownEventError(
+                f"event_id {event_id!r} is not in the training corpus; predictions are out of scope"
+            )
         # Create input DataFrame
         df = pd.DataFrame(
             [
@@ -248,11 +284,18 @@ class PricePredictor:
     ) -> list[PricePrediction]:
         """Make predictions for multiple listings.
 
+        Rows missing `event_id` use the default `'unknown'` and will trigger
+        `UnknownEventError` if the gate is enabled — this is intentional behavior.
+        Callers that want to silently skip such rows must filter them upstream.
+
         Args:
             df: DataFrame with listing data
 
         Returns:
             List of PricePrediction objects
+
+        Raises:
+            UnknownEventError: When any row's `event_id` is not in the training corpus.
         """
         predictions = []
 
@@ -296,6 +339,9 @@ class PricePredictor:
 
         Returns:
             Dictionary mapping zones to predictions
+
+        Raises:
+            UnknownEventError: When `event_id` is not in the training corpus.
         """
         # Representative sections for each zone
         zone_sections = {

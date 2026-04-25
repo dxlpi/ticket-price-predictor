@@ -10,18 +10,22 @@ the bias. Documented here for transparency.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import joblib
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error
 from sklearn.preprocessing import StandardScaler
 
 from ticket_price_predictor.ml.models.base import PriceModel
 from ticket_price_predictor.ml.models.lightgbm_model import LightGBMModel
 from ticket_price_predictor.ml.models.residual import ResidualModel
+
+if TYPE_CHECKING:
+    from ticket_price_predictor.ml.training.target_transforms import TargetTransform
 
 
 def _default_v2_base_configs() -> list[dict[str, Any]]:
@@ -89,6 +93,7 @@ class StackingEnsembleV2(PriceModel):
         meta_alpha: float = 1.0,
         include_neural: bool = False,
         anchor_feature: str | None = None,
+        target_transform: TargetTransform | None = None,
     ) -> None:
         """Initialize stacking ensemble V2.
 
@@ -102,12 +107,16 @@ class StackingEnsembleV2(PriceModel):
             include_neural: Whether to include TabularNeuralModel (requires pytorch-tabular)
             anchor_feature: Optional feature name to include as meta-feature
                 alongside base predictions (e.g., "event_section_median_price")
+            target_transform: Optional transform used to convert OOF predictions
+                back to dollar space for per-base-learner MAE reporting. When
+                None (default), dollar-space metrics are not computed.
         """
         self._base_configs = base_configs or _default_v2_base_configs()
         self._n_folds = n_folds
         self._meta_alpha = meta_alpha
         self._include_neural = include_neural
         self._anchor_feature = anchor_feature
+        self._target_transform = target_transform
 
         # Add neural model if requested and available
         if include_neural:
@@ -133,6 +142,7 @@ class StackingEnsembleV2(PriceModel):
         self._fitted = False
         self._feature_names: list[str] = []
         self._base_importances: list[dict[str, float]] = []
+        self._oof_metrics: dict[str, float] = {}
 
     @property
     def name(self) -> str:
@@ -237,6 +247,19 @@ class StackingEnsembleV2(PriceModel):
             f"  OOF coverage: {oof_covered.sum()}/{n_samples} samples ({100 * oof_covered.mean():.1f}%)"
         )
 
+        # Compute per-base-learner dollar-space OOF MAE (requires target_transform)
+        if self._target_transform is not None:
+            y_covered = np.asarray(y_train)[oof_covered]
+            y_dollars = self._target_transform.inverse_transform(y_covered)
+            base_names = [c["name"] for c in self._base_configs]
+            self._oof_metrics = {}
+            for i, bname in enumerate(base_names):
+                preds_dollars = self._target_transform.inverse_transform(oof_preds[oof_covered, i])
+                self._oof_metrics[bname] = float(mean_absolute_error(y_dollars, preds_dollars))
+            print("  OOF dollar-space MAE per base learner:")
+            for bname, mae in self._oof_metrics.items():
+                print(f"    {bname}: ${mae:.2f}")
+
         # Step 2: Train final base models on full training set
         print("  Training final base models on full training set...")
         self._base_models = []
@@ -262,6 +285,17 @@ class StackingEnsembleV2(PriceModel):
 
         self._meta_model = Ridge(alpha=self._meta_alpha)
         self._meta_model.fit(meta_scaled, oof_y)
+        # Store Ridge OOF predictions for dollar-space meta-learner MAE
+        self._meta_oof_preds: npt.NDArray[Any] = np.asarray(self._meta_model.predict(meta_scaled))
+
+        # Add Ridge meta-learner dollar-space OOF MAE if transform is available
+        if self._target_transform is not None:
+            y_covered = np.asarray(y_train)[oof_covered]
+            y_dollars = self._target_transform.inverse_transform(y_covered)
+            meta_preds_dollars = self._target_transform.inverse_transform(self._meta_oof_preds)
+            ridge_mae = float(mean_absolute_error(y_dollars, meta_preds_dollars))
+            self._oof_metrics["ridge"] = ridge_mae
+            print(f"    ridge (meta): ${ridge_mae:.2f}")
 
         # Report meta-learner weights
         meta_names = [c["name"] for c in self._base_configs]

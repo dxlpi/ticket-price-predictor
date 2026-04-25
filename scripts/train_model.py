@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        choices=["baseline", "lightgbm", "quantile", "xgboost", "catboost", "stacking", "residual"],
+        choices=["baseline", "lightgbm", "quantile", "xgboost", "catboost", "stacking", "stacking_v2", "residual", "hierarchical", "neural"],
         default="lightgbm",
         help="Model type to train (default: lightgbm)",
     )
@@ -104,9 +104,15 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--cv-with-breakdown",
+        action="store_true",
+        help="Emit seen/unseen MAE breakdown per fold to experiments.jsonl (requires --cv)",
+    )
+
+    parser.add_argument(
         "--sample-weight",
         type=str,
-        choices=["none", "inverse_artist_freq", "sqrt_price", "log_price", "inverse_price_quartile"],
+        choices=["none", "inverse_artist_freq", "sqrt_price", "log_price", "inverse_price_quartile", "low_count_upweight"],
         default="none",
         help="Sample weighting strategy (default: none)",
     )
@@ -122,9 +128,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--target-transform",
         type=str,
-        choices=["log", "boxcox", "sqrt"],
+        choices=["log", "boxcox", "sqrt", "relative", "tweedie_raw"],
         default="log",
-        help="Target transform strategy (default: log)",
+        help="Target transform strategy (default: log). Use 'relative' for LOO-safe "
+        "log-residual target; use 'tweedie_raw' with --loss tweedie (no log1p applied).",
     )
 
     parser.add_argument(
@@ -148,9 +155,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--loss",
         type=str,
-        choices=["l2", "huber"],
+        choices=["l2", "huber", "asymmetric-huber", "tweedie", "quantile"],
         default=None,
-        help="Override loss: l2 uses legacy DART+MSE. Default (omitted): GBDT+Huber",
+        help=(
+            "Override loss: l2 uses legacy DART+MSE, asymmetric-huber penalizes "
+            "under-prediction on expensive tickets, tweedie models right-skewed prices "
+            "directly (use with --target-transform tweedie_raw), quantile trains for "
+            "a specific quantile level (default alpha=0.5). Default (omitted): GBDT+Huber"
+        ),
     )
 
     return parser.parse_args()
@@ -177,6 +189,17 @@ def main() -> None:
         print("Loss: l2 (legacy DART+MSE)")
     elif args.loss == "huber" and args.model == "lightgbm":
         print("Loss: huber (already default, no override needed)")
+    elif args.loss == "asymmetric-huber" and args.model == "lightgbm":
+        params = {**LightGBMModel.DEFAULT_PARAMS, "objective": "asymmetric_huber"}
+        params.pop("alpha", None)  # alpha is for built-in huber only
+        print("Loss: asymmetric-huber (GBDT+custom Huber, penalizes under-prediction on expensive tickets)")
+    elif args.loss == "tweedie" and args.model == "lightgbm":
+        params = {**LightGBMModel.DEFAULT_PARAMS, "objective": "tweedie", "tweedie_variance_power": 1.5}
+        params.pop("alpha", None)  # alpha is for built-in huber only
+        print("Loss: tweedie (variance_power=1.5; use with --target-transform tweedie_raw)")
+    elif args.loss == "quantile" and args.model == "lightgbm":
+        params = {**LightGBMModel.DEFAULT_PARAMS, "objective": "quantile", "alpha": 0.5}
+        print("Loss: quantile (alpha=0.5 = median; override alpha via --from-study or study params)")
     else:
         if args.loss is not None and args.model != "lightgbm":
             print(f"WARNING: --loss only applies to lightgbm model, ignoring for {args.model}")
@@ -298,7 +321,14 @@ def main() -> None:
     test_ratio = 1.0 - args.train_ratio - args.val_ratio
 
     if args.cv:
+        from pathlib import Path as _Path
+
+        import numpy as np
+
         from ticket_price_predictor.ml.training.splitter import TemporalGroupCV
+
+        if getattr(args, "cv_with_breakdown", False) and not args.cv:
+            print("NOTE: --cv-with-breakdown has no effect without --cv; skipping.")
 
         print(f"\nUsing temporal cross-validation with {args.n_folds} folds")
         cv = TemporalGroupCV(n_folds=args.n_folds)
@@ -326,9 +356,71 @@ def main() -> None:
             )
             fold_metrics.append(m)
 
-        # Summary
-        import numpy as np
+            if getattr(args, "cv_with_breakdown", False):
+                import numpy as _np
 
+                from ticket_price_predictor.ml.training import evaluator as _evaluator
+                from ticket_price_predictor.ml.training import experiment_log as _exp_log
+
+                # TemporalGroupCV.split() uses test_df as the held-out set.
+                # fold.test_df rows are the outer test set; fold.train_df supplies
+                # the seen event universe.
+                test_df = fold.test_df
+                if "event_id" not in test_df.columns or test_df.empty:
+                    print(f"  [breakdown] fold {i + 1}: event_id missing or empty — skipping")
+                else:
+                    train_event_set = set(fold.train_df["event_id"].tolist())
+                    test_events = _np.asarray(test_df["event_id"].tolist())
+
+                    # Build feature matrix for test_df using the fold's fitted pipeline
+                    # fold_trainer exposes the fitted pipeline via .pipeline
+                    pipeline = getattr(fold_trainer, "pipeline", None)
+                    if pipeline is None:
+                        print(f"  [breakdown] fold {i + 1}: no .pipeline — skipping")
+                    else:
+                        try:
+                            X_test_fold = pipeline.transform(test_df)
+                            has_col = hasattr(fold_trainer, "_target_col")
+                            price_col = fold_trainer._target_col if has_col else "listing_price"  # noqa: SLF001
+                            if price_col not in test_df.columns:
+                                raise KeyError(f"Target column '{price_col}' not in test_df")
+                            y_test_fold = _np.asarray(test_df[price_col].tolist(), dtype=float)
+
+                            breakdown = _evaluator.evaluate_with_breakdown(
+                                X_test=X_test_fold,
+                                y_test=y_test_fold,
+                                test_events=test_events,
+                                train_events=train_event_set,
+                                model=fold_trainer.model,
+                                log_target=True,
+                            )
+                            n_features = X_test_fold.shape[1] if hasattr(X_test_fold, "shape") else None
+                            breakdown["features_n"] = n_features
+
+                            _exp_log.log_experiment(
+                                jsonl_path=_Path(".claude/coral/experiments/experiments.jsonl"),
+                                metrics=breakdown,
+                                config={
+                                    "model": args.model,
+                                    "version": args.version,
+                                    "n_folds": args.n_folds,
+                                    "loss": args.loss,
+                                },
+                                fold_idx=i,
+                            )
+                            pct = breakdown["unseen_event_pct_by_event"]
+                            print(
+                                f"  [breakdown] fold {i + 1}:"
+                                f" primary_mae=${breakdown['primary_mae']:.2f}"
+                                f" overall_mae=${breakdown['overall_mae']:.2f}"
+                                f" seen_mae=${breakdown['seen_mae']:.2f}"
+                                f" unseen_mae=${breakdown['unseen_mae']:.2f}"
+                                f" unseen_pct={pct:.1%}"
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"  [breakdown] fold {i + 1}: error — {exc}")
+
+        # Summary
         maes = [m.mae for m in fold_metrics]
         print(f"\n{'=' * 60}")
         print("CROSS-VALIDATION SUMMARY")

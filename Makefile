@@ -22,9 +22,10 @@ format:
 typecheck:
 	mypy src/
 
-# Run tests
+# Run tests (OMP/BLAS thread count fixed to 1 to prevent XGBoost segfault
+# from OpenBLAS/OpenMP thread state conflict when running full suite)
 test:
-	pytest
+	OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 pytest
 
 # Run tests with coverage report
 test-cov:

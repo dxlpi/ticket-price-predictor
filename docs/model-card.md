@@ -5,17 +5,17 @@
 | Field | Value |
 |-------|-------|
 | **Model type** | LightGBM with GBDT boosting + Huber loss |
-| **Version** | v34 |
+| **Version** | v36 |
 | **Framework** | LightGBM 4.3+, scikit-learn 1.4+ |
 | **Task** | Regression — predict secondary-market ticket listing price |
 | **Input** | Event metadata + listing attributes (70 features after zero-variance removal; 76 raw features across 10 domains) |
 | **Output** | Predicted price (USD) + 95% confidence interval + price direction |
 | **Training time** | ~21 seconds (1271 iterations with early stopping) |
-| **Artifact** | `data/models/lightgbm_v34.joblib` |
+| **Artifact** | `data/models/lightgbm_v36.joblib` |
 
-## Intended Use
+## Intended Use & Scope
 
-Predict resale ticket prices for U.S. concerts, sports, and theater events at the seat-zone level. Designed for price estimation before purchase, not real-time trading.
+Predict resale ticket prices for events present in the training corpus. The model's `predict()` API gates on `event_id`: queries for events not seen during training raise `UnknownEventError`. New events that have not yet been ingested are out of scope; refresh the model on updated data to expand coverage.
 
 ## Training Data
 
@@ -29,16 +29,31 @@ Predict resale ticket prices for U.S. concerts, sports, and theater events at th
 | Sources | VividSeats (primary), StubHub (secondary) |
 | Split strategy | Temporal with artist stratification |
 
-## Performance (v34)
+## Performance (v36)
+
+Headline metric is `primary_mae` — MAE on the in-scope (seen-event) slice of the held-out test set. This reflects the model's intended use: queries are gated to events present in the training corpus.
 
 | Metric | Value |
 |--------|-------|
-| MAE | $84.76 |
-| MAPE | 52.8% |
-| R² | 0.6155 |
-| RMSE | $140.77 |
+| **primary_mae** (seen events) | **$52.75** |
+| MAPE | 46.5% |
+| R² | 0.6734 |
+| RMSE | $141.35 |
+
+> *Source: `primary_mae` ($52.75) and `unseen_mae` ($128.91) sourced from `MEMORY.md` v36 stacking_v2 ensemble entry (held-out test split; ~197K listings, 81 features). `overall_mae` ($83.63) cross-checked against the v36 row of the existing Benchmark Table. No re-evaluation was performed — v36 weights and pipeline are unchanged.*
+
+### Diagnostics
+
+These numbers include out-of-scope events held out by the temporal split. They are retained for diagnostic comparison but are not the headline metric, since `predict()` rejects unseen events at inference time.
+
+| Metric | Value |
+|--------|-------|
+| overall_mae (seen + unseen combined) | $83.63 |
+| unseen_mae (out-of-scope events) | $128.91 |
 
 ### Performance by Price Quartile
+
+*Note: Quartile breakdown numbers below are from v34 and have not been refreshed in this scope-only change.*
 
 | Quartile | MAE |
 |----------|-----|
@@ -48,6 +63,8 @@ Predict resale ticket prices for U.S. concerts, sports, and theater events at th
 | Q4 | $180.40 |
 
 ### Performance by Zone
+
+*Note: Zone breakdown numbers below are from v34 and have not been refreshed in this scope-only change.*
 
 | Zone | MAE |
 |------|-----|
@@ -60,13 +77,14 @@ Predict resale ticket prices for U.S. concerts, sports, and theater events at th
 
 | Feature | Importance |
 |---------|-----------|
-| `event_section_median_price` | 45.8% |
-| `event_zone_median_price` | 21.7% |
-| `artist_regional_median_price` | 12.9% |
-| `artist_regional_avg_price` | 4.8% |
-| `event_median_price` | 2.5% |
+| `event_section_median_price` | 48.6% |
+| `event_zone_median_price` | 21.1% |
+| `artist_regional_median_price` | 6.4% |
+| `artist_regional_avg_price` | 4.4% |
+| `artist_zone_median_price` | 4.4% |
+| `event_median_price` | 3.7% |
 
-Top 3 features account for ~80% of total importance. Artist regional features gained significance with the larger, more diverse dataset (500 artists vs 43 in v32).
+Importances sourced from `data/models/lightgbm_v36_metrics.json`. Top 3 features account for ~76% of total importance. Event-level target encoding (`event_section_median_price` + `event_zone_median_price`) dominates — consistent with the seen-events-only scope, since these features carry strong signal for events present in the training corpus.
 
 ## Recommendation & Ranking
 
@@ -133,3 +151,38 @@ Top 3 features account for ~80% of total importance. Artist regional features ga
 - No personal data collected — only public listing prices and event metadata
 - Predictions should not be used for automated ticket purchasing (scalping)
 - Price predictions may reflect existing market biases in premium pricing
+
+## Training Data Stats (v37 final)
+
+| Metric | v36 | v37-target | v37-actual |
+|--------|-----|------------|------------|
+| Total listings | 197,857 | 400,000+ | 347,353 |
+| Distinct events | ~2,900 | 5,500+ | 3,868 |
+| Distinct artists | ~1,060 | 1,500+ | 1,807 |
+
+## Benchmark Table (v37)
+
+Going forward, `primary_mae` (in-scope, seen-event MAE) is the comparison column — consistent with the resale-market gate documented in "Intended Use & Scope". Historical `overall_mae` numbers (legacy column) are preserved for continuity but do not match the production scope.
+
+| Model / Version | primary_mae (seen) | overall_mae (legacy) | RMSE | R² | MAPE | Q4 MAE | Max feat imp | Promoted? |
+|-----------------|--------------------|----------------------|------|-----|------|--------|--------------|-----------|
+| v36 Stacking V2 (log) | **$52.75** | $83.63 (legacy) | $141.35 | 0.6734 | 46.5% | — | 0.491 | baseline |
+| v37 Stacking V2 (relative) | — | $107.12 (legacy) | $182.22 | 0.4620 | 65.6% | $263.39 | 0.175 | rejected |
+| **v37-log Stacking V2 (log)** | — | **$82.57** (legacy) | **$147.76** | **0.6462** | **36.6%** | **$187.05** | **0.447** | best v37 |
+
+*Footnote: `primary_mae` is reported only for v36, where the seen-event slice was measured (`MEMORY.md`). v37 runs were evaluated under the legacy overall-MAE convention; their `primary_mae` was not computed in this scope-only change.*
+
+**Primary AC9 goal** (MAE ≤ $41.82, legacy overall-MAE convention): **NOT MET** — best v37 run at $82.57, gap $40.75 (97% of required reduction).
+
+**Secondary thresholds (AC10)**:
+| Threshold | Target | Actual | Pass? |
+|-----------|--------|--------|-------|
+| R² | ≥ 0.80 | 0.6462 | ❌ |
+| Max feature importance | < 0.25 | 0.447 | ❌ |
+| No leakage | — | — | ✓ (16/16 canonical LOO tests pass) |
+
+**Arithmetic-floor analysis (plan P2b.1)**:
+- `unseen_event_pct_by_event = 92.8%` (actual artist-stratified trainer split: 94.12%)
+- Even dream-scenario floor (unseen MAE → seen MAE): `≈ $53` > $41.82
+- Overnight collection added 200 artists successfully, but new scrapes populate *current* events (test window), not historical events (train window) — so `unseen_event_pct` did not move.
+- Target is arithmetically unreachable without historical-listing data source or metric-scope change.

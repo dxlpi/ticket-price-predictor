@@ -111,16 +111,18 @@ When you encounter a major issue during any task (bugs with non-obvious root cau
 - Key deps: pydantic, pyarrow, lightgbm, scikit-learn, playwright
 - API keys in `.env`: `TICKETMASTER_API_KEY`, `LASTFM_API_KEY`
 
-## Current Model Performance (v34)
+## Current Model Performance (v36 — StackingEnsembleV2)
 
-- **MAE**: $84.76
-- **MAPE**: 52.8%
-- **R²**: 0.6155
-- **RMSE**: $140.77
-- **Dataset**: 771 events, 500 artists (99,478 listings)
-- **Top features**: `event_section_median_price` (45.8%), `event_zone_median_price` (21.7%), `artist_regional_median_price` (12.9%), `artist_regional_avg_price` (4.8%), `event_median_price` (2.5%)
-- **Key improvements over v32**: Dataset tripled via autonomous discovery pipeline (43→500 artists), artist regional features gained significance (2.6%→17.7%), MAE improved 43.3%
-- **Feature pipeline**: 10 domains, 76 raw features (with snapshot); 70 active after zero-variance removal
+- **MAE**: $83.63
+- **MAPE**: 46.5%
+- **R²**: 0.6734
+- **RMSE**: $141.35
+- **Dataset**: ~2,900 events, ~1,060 artists (197,857 listings)
+- **Model**: StackingEnsembleV2 (LightGBM Huber + LightGBM deeper + ResidualModel → Ridge meta-learner)
+- **Top features**: `event_section_median_price` (49.1%), `event_zone_median_price` (16.6%), `artist_regional_median_price` (5.3%), `event_median_price` (5.3%), `artist_regional_avg_price` (3.6%)
+- **Key improvements over v34**: MAPE -11.9% (52.8→46.5%), R² +9.4% (0.615→0.673), stacking ensemble, 12 new section structural features
+- **Feature pipeline**: 11 domains, 81 active features after zero-variance removal
+- **Known limitation**: Test MAE bottlenecked by unseen events (43% of test, $128.91 MAE) vs seen events ($52.75 MAE). Event-level target encoding provides weak signal for temporally unseen events.
 
 ## Sale Probability Model (CVR v3)
 

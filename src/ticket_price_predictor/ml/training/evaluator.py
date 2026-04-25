@@ -16,6 +16,102 @@ if TYPE_CHECKING:
     from ticket_price_predictor.ml.training.target_transforms import TargetTransform
 
 
+def evaluate_with_breakdown(
+    X_test: npt.NDArray[Any],
+    y_test: npt.NDArray[Any],
+    test_events: npt.NDArray[Any],
+    train_events: set[Any] | npt.NDArray[Any],
+    model: PriceModel,
+    target_transform: TargetTransform | None = None,
+    log_target: bool = False,
+) -> dict[str, Any]:
+    """Evaluate model with seen/unseen event breakdown.
+
+    Rows are classified as "seen" if their event_id appears in train_events,
+    "unseen" otherwise. This is a row-level classification — MAE is averaged
+    over all rows in each bucket.
+
+    unseen_event_pct_by_event is computed by event (fraction of distinct test
+    event_ids not in train_events), not by row, to avoid double-counting
+    within-event listing volume. This matches the MEMORY.md "43% unseen events"
+    framing.
+
+    Q4 threshold: rows with y_test >= 0.9 * percentile(y_test, 95). Using the
+    test 95th percentile (not train) because train prices may be capped at the
+    95th percentile during outlier handling; using train would systematically
+    exclude the tail that matters most for Q4 evaluation.
+
+    Args:
+        X_test: Test features
+        y_test: Test targets (raw price scale)
+        test_events: Array of event_ids aligned with X_test rows
+        train_events: Set or array of event_ids seen during training
+        model: Trained model
+        target_transform: Optional fitted TargetTransform for inverse-transforming
+            predictions. Takes precedence over log_target when set.
+        log_target: If True, inverse-transform predictions from log-space via expm1.
+
+    Returns:
+        Dictionary with keys: overall_mae, primary_mae, seen_mae, unseen_mae,
+        q4_mae, unseen_event_pct_by_event, n_seen, n_unseen. ``primary_mae`` is
+        an alias of ``seen_mae`` (NaN when ``n_seen == 0``).
+    """
+    y_test = np.asarray(y_test)
+    test_events = np.asarray(test_events)
+
+    y_pred = model.predict(X_test)
+    if target_transform is not None:
+        y_pred = target_transform.inverse_transform(y_pred)
+    elif log_target:
+        y_pred = np.clip(np.expm1(y_pred), 0, None)
+
+    train_event_set: set[Any] = (
+        set(train_events) if not isinstance(train_events, set) else train_events
+    )
+
+    seen_mask = np.array([e in train_event_set for e in test_events])
+    unseen_mask = ~seen_mask
+
+    overall_mae = float(mean_absolute_error(y_test, y_pred))
+
+    seen_mae = (
+        float(mean_absolute_error(y_test[seen_mask], y_pred[seen_mask]))
+        if seen_mask.any()
+        else float("nan")
+    )
+    unseen_mae = (
+        float(mean_absolute_error(y_test[unseen_mask], y_pred[unseen_mask]))
+        if unseen_mask.any()
+        else float("nan")
+    )
+
+    q4_threshold = 0.9 * float(np.percentile(y_test, 95))
+    q4_mask = y_test >= q4_threshold
+    q4_mae = (
+        float(mean_absolute_error(y_test[q4_mask], y_pred[q4_mask]))
+        if q4_mask.any()
+        else float("nan")
+    )
+
+    # By-event unseen fraction — distinct event_ids only
+    unique_test_events = set(test_events.tolist())
+    n_unseen_events = sum(1 for e in unique_test_events if e not in train_event_set)
+    unseen_event_pct_by_event = (
+        n_unseen_events / len(unique_test_events) if unique_test_events else float("nan")
+    )
+
+    return {
+        "overall_mae": overall_mae,
+        "primary_mae": seen_mae,
+        "seen_mae": seen_mae,
+        "unseen_mae": unseen_mae,
+        "q4_mae": q4_mae,
+        "unseen_event_pct_by_event": unseen_event_pct_by_event,
+        "n_seen": int(seen_mask.sum()),
+        "n_unseen": int(unseen_mask.sum()),
+    }
+
+
 class ModelEvaluator:
     """Evaluate model performance."""
 

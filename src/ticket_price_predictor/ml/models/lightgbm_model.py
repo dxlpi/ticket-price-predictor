@@ -1,5 +1,7 @@
 """LightGBM model for price prediction."""
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Any, cast
 
@@ -10,6 +12,34 @@ import numpy.typing as npt
 import pandas as pd
 
 from ticket_price_predictor.ml.models.base import PriceModel
+
+_ASYM_HUBER_DELTA: float = 1.0
+_ASYM_HUBER_THRESHOLD: float = 5.3  # log1p(~$200) in log-space
+_ASYM_HUBER_FACTOR: float = 1.5
+
+
+def _asymmetric_huber_fobj(
+    y_pred: npt.NDArray[Any], dtrain: lgb.Dataset
+) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
+    """Custom asymmetric Huber loss objective for LightGBM.
+
+    Penalizes under-prediction on expensive tickets (log-price > 5.3) by
+    factor 1.5, improving Q4 MAE at the cost of slight Q1 degradation.
+    """
+    y_true: npt.NDArray[Any] = np.asarray(dtrain.get_label())
+    residual = y_pred - y_true  # positive = over-predicting
+
+    # Huber gradient and hessian
+    is_l2 = np.abs(residual) <= _ASYM_HUBER_DELTA
+    grad = np.where(is_l2, residual, _ASYM_HUBER_DELTA * np.sign(residual))
+    hess = np.where(is_l2, np.ones_like(residual), np.full_like(residual, _ASYM_HUBER_DELTA))
+
+    # Asymmetric: penalize under-prediction on expensive tickets
+    is_expensive_under = (y_true > _ASYM_HUBER_THRESHOLD) & (residual < 0)
+    grad = np.where(is_expensive_under, grad * _ASYM_HUBER_FACTOR, grad)
+    hess = np.where(is_expensive_under, hess * _ASYM_HUBER_FACTOR, hess)
+
+    return grad, hess
 
 
 class LightGBMModel(PriceModel):
@@ -28,7 +58,17 @@ class LightGBMModel(PriceModel):
           alpha=1.0 means errors up to ~1 log-unit (~2.7x price
           difference) use L2, larger errors use L1. Typical useful
           range: 0.5–2.0.
-        - "quantile": Quantile regression (use QuantileLightGBMModel)
+        - "asymmetric_huber": Custom Huber variant that penalizes
+          under-prediction on expensive tickets (log-price > 5.3,
+          i.e. ~$200+) by factor 1.5. Improves Q4 MAE at the cost
+          of slight Q1 degradation. Uses delta=1.0. The "alpha"
+          param is ignored when this objective is active.
+        - "quantile": Quantile regression for a specific quantile level.
+          Set params["alpha"] to the desired quantile (default 0.5 = median).
+        - "tweedie": Tweedie loss for right-skewed non-negative data. Set
+          params["tweedie_variance_power"] in (1, 2); default 1.5 blends
+          Poisson (power=1) and Gamma (power=2). Do NOT log1p-transform the
+          target when using this objective — pass --target-transform tweedie_raw.
     """
 
     # Default params: GBDT + Huber loss. Huber is robust to outliers (Q4 MAE -17%
@@ -94,6 +134,7 @@ class LightGBMModel(PriceModel):
         self._fitted = False
         self._feature_names: list[str] = []
         self._best_iteration: int | None = None
+        self._init_score_offset: float = 0.0
 
     @property
     def name(self) -> str:
@@ -117,7 +158,7 @@ class LightGBMModel(PriceModel):
         X_val: pd.DataFrame | None = None,
         y_val: pd.Series | None = None,
         sample_weight: npt.NDArray[Any] | None = None,
-    ) -> "LightGBMModel":
+    ) -> LightGBMModel:
         """Fit the model.
 
         Args:
@@ -164,6 +205,35 @@ class LightGBMModel(PriceModel):
         n_estimators = self._params.get("n_estimators", 500)
         early_stopping_rounds = self._params.get("early_stopping_rounds", 50)
 
+        # Handle custom objectives: in LightGBM 4.x, callable objectives are
+        # passed directly via params["objective"] — fobj= kwarg is not supported.
+        if train_params.get("objective") == "asymmetric_huber":
+            train_params["objective"] = _asymmetric_huber_fobj
+            train_params.pop("alpha", None)  # alpha is for built-in huber only
+            # Custom objectives start from init_score=0 by default. With log-space
+            # targets all positive, every gradient is -delta (L1 clipped) → no split
+            # has positive gain. Initialize at training mean so residuals are centered.
+            # predict() returns only tree contributions; store offset to add back.
+            self._init_score_offset = float(np.asarray(y_train).mean())
+            train_init = np.full(len(y_train), self._init_score_offset)
+            train_data = lgb.Dataset(
+                X_train,
+                label=y_train,
+                weight=sample_weight,
+                categorical_feature=cat_features if cat_features else "auto",
+                init_score=train_init,
+            )
+            valid_sets = [train_data]
+            if X_val is not None and y_val is not None:
+                val_init = np.full(len(y_val), self._init_score_offset)
+                val_data = lgb.Dataset(
+                    X_val,
+                    label=y_val,
+                    reference=train_data,
+                    init_score=val_init,
+                )
+                valid_sets.append(val_data)
+
         # Train
         callbacks: list[Any] = []
         if X_val is not None:
@@ -196,7 +266,10 @@ class LightGBMModel(PriceModel):
         if not self._fitted or self._model is None:
             raise RuntimeError("Model must be fitted before predicting")
 
-        return self._model.predict(X, num_iteration=self._best_iteration)  # type: ignore[return-value]
+        preds: npt.NDArray[Any] = self._model.predict(X, num_iteration=self._best_iteration)  # type: ignore[assignment]
+        if self._init_score_offset != 0.0:
+            preds = preds + self._init_score_offset
+        return preds
 
     def get_feature_importance(self, top_k: int | None = None) -> dict[str, float]:
         """Get feature importance scores.
@@ -244,12 +317,13 @@ class LightGBMModel(PriceModel):
                 "feature_names": self._feature_names,
                 "best_iteration": self._best_iteration,
                 "fitted": self._fitted,
+                "init_score_offset": self._init_score_offset,
             },
             path,
         )
 
     @classmethod
-    def load(cls, path: Path) -> "LightGBMModel":
+    def load(cls, path: Path) -> LightGBMModel:
         """Load model from disk.
 
         Args:
@@ -268,6 +342,7 @@ class LightGBMModel(PriceModel):
         model._feature_names = data["feature_names"]
         model._best_iteration = data["best_iteration"]
         model._fitted = data["fitted"]
+        model._init_score_offset = data.get("init_score_offset", 0.0)
 
         return model
 
@@ -329,7 +404,7 @@ class QuantileLightGBMModel(PriceModel):
         X_val: pd.DataFrame | None = None,
         y_val: pd.Series | None = None,
         sample_weight: npt.NDArray[Any] | None = None,
-    ) -> "QuantileLightGBMModel":
+    ) -> QuantileLightGBMModel:
         """Fit three quantile models.
 
         Args:
@@ -417,9 +492,9 @@ class QuantileLightGBMModel(PriceModel):
         assert self._model_median is not None
         assert self._model_lower is not None
         assert self._model_upper is not None
-        median: np.ndarray = self._model_median.predict(X)  # type: ignore[assignment]
-        lower: np.ndarray = self._model_lower.predict(X)  # type: ignore[assignment]
-        upper: np.ndarray = self._model_upper.predict(X)  # type: ignore[assignment]
+        median: npt.NDArray[Any] = self._model_median.predict(X)  # type: ignore[assignment]
+        lower: npt.NDArray[Any] = self._model_lower.predict(X)  # type: ignore[assignment]
+        upper: npt.NDArray[Any] = self._model_upper.predict(X)  # type: ignore[assignment]
 
         return median, lower, upper
 
@@ -457,7 +532,7 @@ class QuantileLightGBMModel(PriceModel):
         )
 
     @classmethod
-    def load(cls, path: Path) -> "QuantileLightGBMModel":
+    def load(cls, path: Path) -> QuantileLightGBMModel:
         """Load model from disk."""
         data = joblib.load(path)
 

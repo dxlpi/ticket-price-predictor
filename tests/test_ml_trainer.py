@@ -261,6 +261,21 @@ class TestModelTrainer:
         with pytest.raises(RuntimeError, match="No model to save"):
             trainer.save(tmp_path)
 
+    def test_trainer_save_writes_known_events(self, sample_data, tmp_path):
+        """save() writes sorted unique train-split event_ids under meta['known_events']."""
+        trainer = ModelTrainer(model_type="baseline", model_version="v1")
+        trainer.train(sample_data)
+        trainer.save(tmp_path)
+
+        meta_path = tmp_path / "baseline_v1_meta.json"
+        assert meta_path.exists()
+        meta = json.loads(meta_path.read_text())
+
+        # _train_event_ids was captured from the train split, post-temporal-split.
+        expected = sorted(set(trainer._train_event_ids))
+        assert meta["known_events"] == expected
+        assert len(expected) > 0
+
     def test_load_model(self, sample_data, tmp_path):
         """Test loading a saved model."""
         # Train and save (use GBDT for deterministic test behavior)

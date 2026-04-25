@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from ticket_price_predictor.ml.features.pipeline import FeaturePipeline
@@ -14,14 +15,15 @@ from ticket_price_predictor.ml.models.base import PriceModel
 from ticket_price_predictor.ml.models.baseline import BaselineModel
 from ticket_price_predictor.ml.models.catboost_model import CatBoostModel
 from ticket_price_predictor.ml.models.lightgbm_model import LightGBMModel, QuantileLightGBMModel
-from ticket_price_predictor.ml.models.residual import ResidualModel
+from ticket_price_predictor.ml.models.residual import HierarchicalResidualModel, ResidualModel
 from ticket_price_predictor.ml.models.stacking import StackingEnsemble
-from ticket_price_predictor.ml.models.stacking_v2 import StackingEnsembleV2
 from ticket_price_predictor.ml.models.xgboost_model import XGBoostModel
 from ticket_price_predictor.ml.schemas import TrainingMetrics
 from ticket_price_predictor.ml.training.evaluator import ModelEvaluator
 from ticket_price_predictor.ml.training.splitter import DataSplit, TimeBasedSplitter
 from ticket_price_predictor.ml.training.target_transforms import (
+    EventBaseResolverImpl,
+    RelativeResidualTransform,
     TargetTransform,
     create_target_transform,
 )
@@ -35,12 +37,19 @@ ModelType = Literal[
     "stacking",
     "stacking_v2",
     "residual",
+    "hierarchical",
+    "neural",
 ]
 
 OutlierStrategy = Literal["global_p95", "zone_winsorize", "none"]
 
 SampleWeightStrategy = Literal[
-    "none", "inverse_artist_freq", "sqrt_price", "log_price", "inverse_price_quartile"
+    "none",
+    "inverse_artist_freq",
+    "sqrt_price",
+    "log_price",
+    "inverse_price_quartile",
+    "low_count_upweight",
 ]
 
 # Suffixes that indicate scale-independent derived statistics.
@@ -56,6 +65,7 @@ _LOG_EXCLUDE_SUFFIXES = (
     "_rate",
     "_skewness",
     "_deviation",
+    "_at_t",  # within-event zone log-ratio (we_zone_price_at_t) — already in log space
 )
 
 
@@ -241,6 +251,7 @@ class ModelTrainer:
         self._metrics: TrainingMetrics | None = None
         self._log_transformed_cols: list[str] = []
         self._target_transform: TargetTransform | None = None
+        self._train_event_ids: list[str] = []
 
     @property
     def model(self) -> PriceModel | None:
@@ -271,9 +282,17 @@ class ModelTrainer:
         elif self._model_type == "stacking":
             return StackingEnsemble()
         elif self._model_type == "stacking_v2":
+            from ticket_price_predictor.ml.models.stacking_v2 import StackingEnsembleV2
+
             return StackingEnsembleV2()
         elif self._model_type == "residual":
             return ResidualModel()
+        elif self._model_type == "hierarchical":
+            return HierarchicalResidualModel()
+        elif self._model_type == "neural":
+            from ticket_price_predictor.ml.models.neural import TabularNeuralModel
+
+            return TabularNeuralModel(params=params)
         else:
             raise ValueError(f"Unknown model type: {self._model_type}")
 
@@ -326,6 +345,9 @@ class ModelTrainer:
                 "log" (default): np.log1p/np.expm1 (backward-compatible).
                 "boxcox": scipy Box-Cox with fitted lambda.
                 "sqrt": square root transform (gentler compression).
+                "relative": LOO-safe relative-residual (log(price/event_median));
+                    requires objective to be MAE/Huber (not MAPE).
+                "tweedie_raw": pass-through (no log1p); use with objective="tweedie".
 
         Returns:
             Training metrics
@@ -369,6 +391,14 @@ class ModelTrainer:
             stratify_col="artist_or_team",
         )
         raw_split = splitter.split_raw(df)
+
+        if "event_id" in raw_split.train_df.columns:
+            self._train_event_ids = sorted(
+                raw_split.train_df["event_id"].astype(str).unique().tolist()
+            )
+            print(f"Captured {len(self._train_event_ids)} unique training event_ids")
+        else:
+            self._train_event_ids = []
 
         print(
             f"Raw split — Train: {raw_split.n_train}, Val: {raw_split.n_val}, Test: {raw_split.n_test}"
@@ -414,10 +444,15 @@ class ModelTrainer:
         self._feature_pipeline = FeaturePipeline(**_pipeline_kwargs)
         self._feature_pipeline.fit(train_df)
 
-        # Transform each split independently
-        X_train = self._feature_pipeline.transform(train_df)
-        X_val = self._feature_pipeline.transform(val_df)
-        X_test = self._feature_pipeline.transform(test_df)
+        # Transform each split independently — is_train=True enables LOO scoping
+        # in WithinEventDynamicsFeatureExtractor; all other extractors ignore the flag.
+        X_train = self._feature_pipeline.transform_with_train_flag(train_df, is_train=True)
+        X_val = self._feature_pipeline.transform_with_train_flag(val_df, is_train=False)
+        X_test = (
+            self._feature_pipeline.transform_with_train_flag(test_df, is_train=False)
+            if len(test_df) > 0
+            else pd.DataFrame(columns=X_train.columns)
+        )
 
         # Remove zero-variance features (constants add noise, waste splits)
         zero_var_cols = [c for c in X_train.columns if X_train[c].nunique() <= 1]
@@ -444,14 +479,57 @@ class ModelTrainer:
                 X_val[c] = np.log1p(X_val[c].clip(lower=0))
                 X_test[c] = np.log1p(X_test[c].clip(lower=0))
 
-        # Transform target for better handling of skewed price distribution
-        tt = create_target_transform(target_transform)
-        tt.fit(train_df[self._target_col].values)
+        # Transform target for better handling of skewed price distribution.
+        # "tweedie_raw": no log1p — Tweedie objective models raw prices directly.
+        # "relative": LOO-safe log-residual; resolver dispatched by call site (is_train).
+        if target_transform == "tweedie_raw":
+            from ticket_price_predictor.ml.training.target_transforms import LogTransform
+
+            # Identity-like pass-through: fit a LogTransform but don't call transform.
+            # We use a simple pass-through wrapper so downstream code is uniform.
+            class _PassThrough(LogTransform):
+                def transform(
+                    self,
+                    y: npt.NDArray[Any],
+                    df: pd.DataFrame | None = None,  # noqa: ARG002
+                    *,
+                    is_train: bool | None = None,  # noqa: ARG002
+                ) -> npt.NDArray[Any]:
+                    return np.asarray(y, dtype=np.float64)
+
+                def inverse_transform(
+                    self,
+                    y: npt.NDArray[Any],
+                    df: pd.DataFrame | None = None,  # noqa: ARG002
+                ) -> npt.NDArray[Any]:
+                    return np.clip(np.asarray(y, dtype=np.float64), 0, None)
+
+                @property
+                def name(self) -> str:
+                    return "tweedie_raw"
+
+            tt: TargetTransform = _PassThrough()
+            tt.fit(train_df[self._target_col].values)
+        elif target_transform == "relative":
+            resolver = EventBaseResolverImpl()
+            resolver.fit(train_df)
+            tt = create_target_transform("relative", event_base_resolver=resolver)
+            tt.fit(train_df[self._target_col].values)
+        else:
+            tt = create_target_transform(target_transform)
+            tt.fit(train_df[self._target_col].values)
+
         self._target_transform = tt
         print(f"Target transform: {tt.name}")
 
-        y_train = tt.transform(train_df[self._target_col].values)
-        y_val = tt.transform(val_df[self._target_col].values)
+        # Dispatch transform with call-site is_train flag for RelativeResidualTransform.
+        # Other transforms ignore df and is_train (default kwargs).
+        if isinstance(tt, RelativeResidualTransform):
+            y_train = tt.transform(train_df[self._target_col].values, train_df, is_train=True)
+            y_val = tt.transform(val_df[self._target_col].values, val_df, is_train=False)
+        else:
+            y_train = tt.transform(train_df[self._target_col].values)
+            y_val = tt.transform(val_df[self._target_col].values)
         y_test_raw = test_df[self._target_col].values  # keep raw for evaluation
 
         print(f"Feature shape: {X_train.shape}")
@@ -523,12 +601,83 @@ class ModelTrainer:
                 f"Sample weights: inverse_price_quartile "
                 f"(min={sample_weight.min():.3f}, max={sample_weight.max():.3f})"
             )
+        elif sample_weight_strategy == "low_count_upweight":
+            # Upweight training rows from artists with few training events.
+            # Artists below the median training-event count get weight 2.0;
+            # others get weight 1.0.  Normalized so sum(weights) == n_train.
+            # Upweight factor 2.0 chosen as a conservative starting point;
+            # stronger values risk over-correcting on sparse artists.
+            _upweight_factor = 2.0
+            if "artist_or_team" in train_df.columns and "event_id" in train_df.columns:
+                artist_event_counts = train_df.groupby("artist_or_team")["event_id"].nunique()
+                median_count = float(np.median(artist_event_counts.values))
+                low_count_artists = set(
+                    artist_event_counts[artist_event_counts < median_count].index
+                )
+                raw_weights = (
+                    train_df["artist_or_team"]
+                    .map(lambda a: _upweight_factor if a in low_count_artists else 1.0)
+                    .values.astype(float)
+                )
+                # Normalize so weights sum to n_train
+                sample_weight = raw_weights / raw_weights.sum() * len(raw_weights)
+                print(
+                    f"Sample weights: low_count_upweight "
+                    f"(threshold={median_count:.1f} events, "
+                    f"low_count_artists={len(low_count_artists)}, "
+                    f"min={sample_weight.min():.3f}, max={sample_weight.max():.3f})"
+                )
+            else:
+                print(
+                    "WARNING: sample_weight_strategy='low_count_upweight' requested "
+                    "but 'artist_or_team' or 'event_id' column not found — using uniform weights"
+                )
 
         # Train model
         print("Training model...")
         start_time = time.time()
 
         self._model = self._create_model(params=params)
+
+        # For hierarchical model: inject event_id as a feature column so the
+        # model can build event-level aggregates and OOF folds.
+        X_train_model = X_train
+        X_val_model = X_val
+        if self._model_type == "hierarchical":
+            if "event_id" in train_df.columns:
+                X_train_model = X_train.copy()
+                X_train_model["event_id"] = train_df["event_id"].values
+                if X_val is not None and "event_id" in val_df.columns:
+                    X_val_model = X_val.copy()
+                    X_val_model["event_id"] = val_df["event_id"].values
+            else:
+                print(
+                    "WARNING: hierarchical model requested but 'event_id' not in raw data "
+                    "— falling back to per-row stage 1"
+                )
+
+        # For neural model: inject raw categorical columns for entity embeddings
+        if self._model_type == "neural":
+            from ticket_price_predictor.ml.models.neural import CATEGORICAL_COLS
+
+            # Raw categorical columns (exclude day_of_week_str which is derived below)
+            raw_cat_cols = [c for c in CATEGORICAL_COLS[:-1] if c in train_df.columns]
+            X_train_model = X_train.copy()
+            for col in raw_cat_cols:
+                X_train_model[col] = train_df[col].values
+            if "day_of_week" in X_train_model.columns:
+                X_train_model["day_of_week_str"] = (
+                    X_train_model["day_of_week"].astype(int).astype(str)
+                )
+            if X_val is not None:
+                X_val_model = X_val.copy()
+                for col in raw_cat_cols:
+                    if col in val_df.columns:
+                        X_val_model[col] = val_df[col].values
+                if "day_of_week" in X_val_model.columns:
+                    X_val_model["day_of_week_str"] = (
+                        X_val_model["day_of_week"].astype(int).astype(str)
+                    )
 
         # stacking_v2 needs explicit timestamps because upstream artist-stratified
         # splitter does not produce globally time-sorted rows.
@@ -538,9 +687,9 @@ class ModelTrainer:
 
         try:
             self._model.fit(  # type: ignore[call-arg]
-                X_train,
+                X_train_model,
                 pd.Series(y_train),
-                X_val,
+                X_val_model,
                 pd.Series(y_val),
                 sample_weight=sample_weight,
                 **extra_fit_kwargs,
@@ -550,9 +699,9 @@ class ModelTrainer:
             if sample_weight is not None:
                 print("WARNING: model does not support sample_weight — fitting without weights")
             self._model.fit(
-                X_train,
+                X_train_model,
                 pd.Series(y_train),
-                X_val,
+                X_val_model,
                 pd.Series(y_val),
             )
 
@@ -604,20 +753,46 @@ class ModelTrainer:
                 .values
             )
 
-        # Evaluate: inverse-transform predictions back to raw price scale
+        # Evaluate: inverse-transform predictions back to raw price scale.
+        # RelativeResidualTransform.inverse_transform() needs test_df for event bases,
+        # so we handle it explicitly rather than relying on the evaluator's generic path.
         print("Evaluating model...")
-        self._metrics = ModelEvaluator.evaluate_model(
-            self._model,
-            X_test,
-            y_test_raw,
-            n_train=len(X_train),
-            n_val=len(X_val),
-            training_time=training_time,
-            model_version=self._model_version,
-            log_target=(target_transform == "log"),
-            target_transform=tt if target_transform != "log" else None,
-            zones=test_zones,
-        )
+        if isinstance(tt, RelativeResidualTransform):
+            y_pred_raw = tt.inverse_transform(self._model.predict(X_test), test_df)
+            y_pred_raw = np.clip(y_pred_raw, 0, None)
+            # Evaluate with pre-inverted predictions; bypass evaluator's generic inverse path
+            metrics_dict = ModelEvaluator.compute_metrics(y_test_raw, y_pred_raw, zones=test_zones)
+            self._metrics = TrainingMetrics(
+                model_version=self._model_version,
+                model_type=self._model.name,
+                trained_at=datetime.now(UTC),
+                n_train_samples=len(X_train),
+                n_val_samples=len(X_val),
+                n_test_samples=len(y_test_raw),
+                n_features=X_train.shape[1],
+                training_time_seconds=training_time,
+                mae=metrics_dict["mae"],
+                rmse=metrics_dict["rmse"],
+                mape=metrics_dict["mape"],
+                r2=metrics_dict["r2"],
+                best_iteration=getattr(self._model, "best_iteration", None),
+                feature_importance=self._model.get_feature_importance(),
+                quartile_mae=metrics_dict.get("quartile_mae"),
+                zone_mae=metrics_dict.get("zone_mae"),
+            )
+        else:
+            self._metrics = ModelEvaluator.evaluate_model(
+                self._model,
+                X_test,
+                y_test_raw,
+                n_train=len(X_train),
+                n_val=len(X_val),
+                training_time=training_time,
+                model_version=self._model_version,
+                log_target=(target_transform == "log"),
+                target_transform=tt if target_transform not in ("log", "tweedie_raw") else None,
+                zones=test_zones,
+            )
 
         ModelEvaluator.print_metrics(self._metrics)
 
@@ -910,6 +1085,8 @@ class ModelTrainer:
             meta["log_transformed_cols"] = self._log_transformed_cols
         if self._target_transform is not None:
             meta["target_transform"] = self._target_transform.name
+        if self._train_event_ids:
+            meta["known_events"] = self._train_event_ids
         if meta:
             meta_path = output_dir / f"{self._model_type}_{self._model_version}_meta.json"
             meta_path.write_text(json.dumps(meta))
@@ -1040,9 +1217,11 @@ class ModelTrainer:
             return CatBoostModel.load(model_path)
         elif model_type == "stacking":
             return StackingEnsemble.load(model_path)
-        elif model_type == "stacking_v2":
-            return StackingEnsembleV2.load(model_path)
         elif model_type == "residual":
             return ResidualModel.load(model_path)
+        elif model_type == "neural":
+            from ticket_price_predictor.ml.models.neural import TabularNeuralModel
+
+            return TabularNeuralModel.load(model_path)
         else:
             raise ValueError(f"Unknown model type: {model_type}")

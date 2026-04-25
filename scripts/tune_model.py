@@ -91,7 +91,28 @@ def main() -> None:
         help="Data directory (default: data)",
     )
 
+    parser.add_argument(
+        "--tune-catboost",
+        action="store_true",
+        help="Tune CatBoost model (stub — actual tuning tracked as AC8 follow-up)",
+    )
+    parser.add_argument(
+        "--tune-neural",
+        action="store_true",
+        help="Tune FT-Transformer neural model (stub — actual tuning tracked as AC8 follow-up)",
+    )
+
     args = parser.parse_args()
+
+    # Handle catboost/neural tuning stubs before proceeding with LightGBM path
+    if args.tune_catboost:
+        print("Will tune catboost")
+        print("NOT IMPLEMENTED — track as AC8 follow-up")
+        return
+    if args.tune_neural:
+        print("Will tune neural")
+        print("NOT IMPLEMENTED — track as AC8 follow-up")
+        return
 
     # Generate study name if not provided
     if args.study_name is None:
@@ -221,9 +242,9 @@ def main() -> None:
     print(f"Trial metadata saved to: {manager.trials_dir / args.study_name}")
 
     print("\nNext steps:")
-    print(f"  1. Train final model:")
+    print("  1. Train final model:")
     print(f"     python scripts/train_model.py --from-study {args.study_name} --version vXX")
-    print(f"  2. View study in Optuna Dashboard (optional):")
+    print("  2. View study in Optuna Dashboard (optional):")
     print(f"     optuna-dashboard {manager.storage}")
 
 
