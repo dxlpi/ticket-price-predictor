@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        choices=["baseline", "lightgbm", "quantile", "xgboost", "catboost", "stacking", "stacking_v2", "residual", "hierarchical", "neural"],
+        choices=["baseline", "lightgbm", "quantile", "xgboost", "catboost", "stacking", "stacking_v2", "residual", "hierarchical", "neural", "q4_specialist"],
         default="lightgbm",
         help="Model type to train (default: lightgbm)",
     )
@@ -150,6 +150,21 @@ def parse_args() -> argparse.Namespace:
         "--no-snapshot",
         action="store_true",
         help="Disable temporal snapshot features",
+    )
+
+    parser.add_argument(
+        "--no-listing-structural",
+        action="store_true",
+        help="Disable ListingStructuralFeatureExtractor (v38: enabled by default)",
+    )
+
+    parser.add_argument(
+        "--no-quantile-bases",
+        action="store_true",
+        help=(
+            "Disable quantile_25 and quantile_75 base learners in stacking_v2 "
+            "(v38: enabled by default; use for baseline_v38)"
+        ),
     )
 
     parser.add_argument(
@@ -291,6 +306,15 @@ def main() -> None:
         if study_pipeline_kwargs is None:
             study_pipeline_kwargs = {}
         study_pipeline_kwargs["include_snapshot"] = False
+    if args.no_listing_structural:
+        if study_pipeline_kwargs is None:
+            study_pipeline_kwargs = {}
+        study_pipeline_kwargs["include_listing_structural"] = False
+
+    # Build model_kwargs from CLI flags
+    model_kwargs: dict[str, Any] | None = None
+    if args.no_quantile_bases:
+        model_kwargs = {"include_quantile_bases": False}
     if args.from_study and smoothing:
         extractor_params: dict[str, dict[str, Any]] = {}
         if "event_pricing_smoothing" in smoothing:
@@ -446,6 +470,7 @@ def main() -> None:
             sample_weight_strategy=args.sample_weight,
             outlier_strategy=args.outlier_strategy,
             target_transform=args.target_transform,
+            model_kwargs=model_kwargs,
         )
 
     # Save model

@@ -126,6 +126,20 @@ Mapping logic: `normalization/seat_zones.py` — keyword and regex matching on r
 | `event_zone_median_price` | `ml/features/event_pricing.py` | Bayesian-smoothed median price for event×zone (strongest feature, 60% importance) |
 | `popularity_score` | `ml/features/popularity.py` | Weighted log-normalized 0-100 score from YouTube + Last.fm |
 | `city_median_price` | `ml/features/regional.py` | Bayesian-smoothed median price for city |
+| `seat_number` | `ml/features/listing_structural.py` (v38) | Numeric seat number from `seat_from`; -1 sentinel for missing/wildcard |
+| `seat_span` | `ml/features/listing_structural.py` (v38) | `seat_to - seat_from + 1`; capped at 50; defaults to 1 |
+| `is_low_seat_number` | `ml/features/listing_structural.py` (v38) | 1 if `seat_number ≤ 5` (proxy for aisle-adjacent seats) |
+| `is_unknown_seat` | `ml/features/listing_structural.py` (v38) | 1 if `seat_from` was missing or `*` wildcard |
+| `row_bucket_encoded` | `ml/features/listing_structural.py` (v38) | Ordinal {front:0, mid:1, back:2, ga:3, unknown:4} from `_row_bucket(row)` |
+| `event_section_row_median_price` | `ml/features/listing_structural.py` (v38) | Bayesian-smoothed `(event, section, row_bucket)` mean price (m=8); LOO formula smooths toward `(event, section)` prior — see plan math spec § B |
+| `event_section_row_listing_count` | `ml/features/listing_structural.py` (v38) | `log1p(n)` where n = training listings in `(event, section, row_bucket)` |
+| `row_bucket_section_count` | `ml/features/listing_structural.py` (v38) | Distinct sections per `(event, row_bucket)` from training data; capped at 50 |
+
+## Stacking V2 Meta-Features (v38)
+
+| Meta-Feature | Computed By | Formula |
+|--------------|------------|---------|
+| `q75_tail` | `ml/models/stacking_v2.py:_build_meta_features` (v38) | `q75_pred · sigmoid((huber_pred − log1p($310)) / 0.3)` — sigmoid-gated quantile contribution; Ridge learns the tail-blend weight automatically. Only added when `include_quantile_bases=True` AND both `lgb_huber` and `quantile_75` base learners are present. |
 
 ## Storage Layout
 

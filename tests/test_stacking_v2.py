@@ -59,11 +59,20 @@ def test_stacking_v2_registered_in_trainer() -> None:
 def test_stacking_v2_default_base_configs_include_residual() -> None:
     from ticket_price_predictor.ml.models.stacking_v2 import _default_v2_base_configs
 
+    # Default v38: 5 base learners (3 + 2 quantile)
     configs = _default_v2_base_configs()
     cls_names = [c["cls"].__name__ for c in configs]
     assert "ResidualModel" in cls_names
-    # Also verify LightGBMModel variants
-    assert cls_names.count("LightGBMModel") == 2
+    assert cls_names.count("LightGBMModel") == 4  # lgb_huber, lgb_deeper, quantile_25, quantile_75
+    names = [c["name"] for c in configs]
+    assert "quantile_25" in names and "quantile_75" in names
+
+    # baseline_v38 (no quantile): 3 base learners
+    configs_baseline = _default_v2_base_configs(include_quantile_bases=False)
+    assert len(configs_baseline) == 3
+    baseline_names = [c["name"] for c in configs_baseline]
+    assert "quantile_25" not in baseline_names
+    assert "quantile_75" not in baseline_names
 
 
 def test_stacking_v2_predict_before_fit_raises() -> None:
@@ -91,13 +100,104 @@ def test_stacking_v2_feature_importance() -> None:
 def test_stacking_v2_get_params() -> None:
     from ticket_price_predictor.ml.models.stacking_v2 import StackingEnsembleV2
 
+    # v38 defaults: 5 base models
     model = StackingEnsembleV2(n_folds=3, meta_alpha=2.0, include_neural=False)
     params = model.get_params()
     assert params["n_folds"] == 3
     assert params["meta_alpha"] == 2.0
-    assert params["n_base_models"] == 3
+    assert params["n_base_models"] == 5
     assert "lgb_huber" in params["base_model_names"]
-    assert "residual" in params["base_model_names"]
+    assert "quantile_25" in params["base_model_names"]
+    assert "quantile_75" in params["base_model_names"]
+
+    # baseline_v38: 3 base models
+    model_baseline = StackingEnsembleV2(
+        n_folds=3, meta_alpha=2.0, include_neural=False, include_quantile_bases=False
+    )
+    assert model_baseline.get_params()["n_base_models"] == 3
+
+
+def test_stacking_v2_quantile_meta_feature() -> None:
+    """v38 stacking_v2 includes q75_tail meta-feature when both lgb_huber and
+    quantile_75 base learners are present."""
+    from ticket_price_predictor.ml.models.stacking_v2 import StackingEnsembleV2
+
+    model = StackingEnsembleV2(include_quantile_bases=True)
+    n_base = len(model._base_configs)
+    assert n_base == 5, f"Expected 5 base configs, got {n_base}"
+
+    # Build synthetic base predictions; some above Q4 threshold, some below
+    # log1p($310) ≈ 5.74; mix is half-and-half
+    base_preds = np.column_stack(
+        [
+            np.array([4.0, 4.0, 6.0, 6.0]),  # lgb_huber (idx 0)
+            np.array([4.1, 4.1, 6.1, 6.1]),  # lgb_deeper (idx 1)
+            np.array([4.0, 4.0, 6.0, 6.0]),  # residual (idx 2)
+            np.array([3.5, 3.5, 5.5, 5.5]),  # quantile_25 (idx 3)
+            np.array([4.5, 4.5, 6.5, 6.5]),  # quantile_75 (idx 4)
+        ]
+    )
+
+    X_dummy = pd.DataFrame({"x": np.zeros(4)})
+    meta_features = model._build_meta_features(base_preds, X_dummy)
+
+    # Expected shape: (4 rows, 5 base_preds + 1 q75_tail)
+    assert meta_features.shape == (4, 6)
+
+    # q75_tail column = q75 * sigmoid((huber - 5.74) / 0.3)
+    # For huber=4.0: z = (4.0 - 5.74) / 0.3 = -5.8 → sigmoid ≈ 0.003 → tiny q75
+    # For huber=6.0: z = (6.0 - 5.74) / 0.3 = 0.87 → sigmoid ≈ 0.70 → ~70% of q75
+    q75_tail = meta_features[:, 5]
+    assert q75_tail[0] < 0.1, f"Below-threshold should give near-zero, got {q75_tail[0]}"
+    assert q75_tail[1] < 0.1
+    assert q75_tail[2] > 3.0, f"Above-threshold should give substantial q75, got {q75_tail[2]}"
+    assert q75_tail[3] > 3.0
+
+
+def test_stacking_v2_q75_tail_omitted_when_no_quantile_bases() -> None:
+    """When include_quantile_bases=False, q75_tail meta-feature is not added."""
+    from ticket_price_predictor.ml.models.stacking_v2 import StackingEnsembleV2
+
+    model = StackingEnsembleV2(include_quantile_bases=False)
+    n_base = len(model._base_configs)
+    assert n_base == 3
+
+    base_preds = np.column_stack(
+        [
+            np.array([6.0, 6.0]),  # lgb_huber
+            np.array([6.0, 6.0]),  # lgb_deeper
+            np.array([6.0, 6.0]),  # residual
+        ]
+    )
+    X_dummy = pd.DataFrame({"x": np.zeros(2)})
+    meta_features = model._build_meta_features(base_preds, X_dummy)
+    # No q75_tail; shape matches base_preds exactly
+    assert meta_features.shape == (2, 3)
+
+
+def test_stacking_v2_save_load_preserves_quantile_flag() -> None:
+    """include_quantile_bases is persisted across save/load."""
+    import tempfile
+    from pathlib import Path
+
+    from ticket_price_predictor.ml.models.stacking_v2 import StackingEnsembleV2
+
+    X_train, y_train, X_val, y_val = make_test_data()
+    model = StackingEnsembleV2(n_folds=2, include_neural=False, include_quantile_bases=False)
+    model.fit(X_train, y_train, X_val, y_val)
+    assert model._include_quantile_bases is False
+    assert len(model._base_configs) == 3
+
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "model.joblib"
+        model.save(path)
+        loaded = StackingEnsembleV2.load(path)
+
+    assert loaded._include_quantile_bases is False
+    assert len(loaded._base_configs) == 3
+    loaded_names = [c["name"] for c in loaded._base_configs]
+    assert "residual" in loaded_names
+    assert "quantile_25" not in loaded_names
 
 
 def test_fit_sorts_by_timestamps_when_provided() -> None:

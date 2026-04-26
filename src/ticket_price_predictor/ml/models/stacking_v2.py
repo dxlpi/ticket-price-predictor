@@ -28,14 +28,17 @@ if TYPE_CHECKING:
     from ticket_price_predictor.ml.training.target_transforms import TargetTransform
 
 
-def _default_v2_base_configs() -> list[dict[str, Any]]:
+def _default_v2_base_configs(include_quantile_bases: bool = True) -> list[dict[str, Any]]:
     """Return default base learner configurations for V2.
 
     Diversity comes from:
     - Two LightGBM variants with different depth/learning-rate/iterations
     - ResidualModel (two-stage coarse+refiner decomposition)
+    - Two QuantileLightGBM bases at q=0.25 and q=0.75 (when include_quantile_bases=True).
+      Their predictions feed Ridge directly; the q75 prediction is also gated through
+      a sigmoid Q4 mask (see _build_meta_features).
     """
-    return [
+    configs: list[dict[str, Any]] = [
         {
             "name": "lgb_huber",
             "cls": LightGBMModel,
@@ -57,6 +60,40 @@ def _default_v2_base_configs() -> list[dict[str, Any]]:
             "params": {},  # ResidualModel uses its own defaults
         },
     ]
+    if include_quantile_bases:
+        # Quantile bases: metric=["quantile"] + first_metric_only=True so early stopping
+        # uses pinball loss only (mae/rmse from DEFAULT_PARAMS would interfere).
+        configs.extend(
+            [
+                {
+                    "name": "quantile_25",
+                    "cls": LightGBMModel,
+                    "params": {
+                        **LightGBMModel.DEFAULT_PARAMS,
+                        "objective": "quantile",
+                        "alpha": 0.25,
+                        "metric": ["quantile"],
+                        "first_metric_only": True,
+                        "n_estimators": 1500,
+                        "learning_rate": 0.03,
+                    },
+                },
+                {
+                    "name": "quantile_75",
+                    "cls": LightGBMModel,
+                    "params": {
+                        **LightGBMModel.DEFAULT_PARAMS,
+                        "objective": "quantile",
+                        "alpha": 0.75,
+                        "metric": ["quantile"],
+                        "first_metric_only": True,
+                        "n_estimators": 1500,
+                        "learning_rate": 0.03,
+                    },
+                },
+            ]
+        )
+    return configs
 
 
 class StackingEnsembleV2(PriceModel):
@@ -94,6 +131,7 @@ class StackingEnsembleV2(PriceModel):
         include_neural: bool = False,
         anchor_feature: str | None = None,
         target_transform: TargetTransform | None = None,
+        include_quantile_bases: bool = True,
     ) -> None:
         """Initialize stacking ensemble V2.
 
@@ -110,8 +148,14 @@ class StackingEnsembleV2(PriceModel):
             target_transform: Optional transform used to convert OOF predictions
                 back to dollar space for per-base-learner MAE reporting. When
                 None (default), dollar-space metrics are not computed.
+            include_quantile_bases: If True (default), append quantile_25 and
+                quantile_75 base learners to the default config. Ignored when
+                base_configs is provided explicitly.
         """
-        self._base_configs = base_configs or _default_v2_base_configs()
+        if base_configs is None:
+            base_configs = _default_v2_base_configs(include_quantile_bases=include_quantile_bases)
+        self._base_configs = base_configs
+        self._include_quantile_bases = include_quantile_bases
         self._n_folds = n_folds
         self._meta_alpha = meta_alpha
         self._include_neural = include_neural
@@ -143,6 +187,7 @@ class StackingEnsembleV2(PriceModel):
         self._feature_names: list[str] = []
         self._base_importances: list[dict[str, float]] = []
         self._oof_metrics: dict[str, float] = {}
+        self._gate_on_rate: float | None = None
 
     @property
     def name(self) -> str:
@@ -297,14 +342,39 @@ class StackingEnsembleV2(PriceModel):
             self._oof_metrics["ridge"] = ridge_mae
             print(f"    ridge (meta): ${ridge_mae:.2f}")
 
-        # Report meta-learner weights
+        # Report meta-learner weights — must match _build_meta_features column order:
+        # [base_preds..., q75_tail (if applicable), anchor (if applicable)]
         meta_names = [c["name"] for c in self._base_configs]
+        huber_idx_fit = next(
+            (i for i, c in enumerate(self._base_configs) if c["name"] == "lgb_huber"),
+            None,
+        )
+        q75_idx_fit = next(
+            (i for i, c in enumerate(self._base_configs) if c["name"] == "quantile_75"),
+            None,
+        )
+        if huber_idx_fit is not None and q75_idx_fit is not None:
+            meta_names.append("q75_tail")
         if self._anchor_feature:
             meta_names.append(self._anchor_feature)
         weights = self._meta_model.coef_
         print("  Meta-learner weights:")
         for mname, w in zip(meta_names, weights, strict=False):
             print(f"    {mname}: {w:.4f}")
+
+        # Diagnostic: gate-on rate during fit (using OOF base preds).
+        # Healthy range: 15–35%. Outside that, q75_tail is degenerate.
+        if huber_idx_fit is not None and q75_idx_fit is not None:
+            huber_oof = oof_preds[oof_covered, huber_idx_fit]
+            gate_z = (huber_oof - self._Q4_LOG_THRESHOLD) / self._GATE_SCALE
+            gate_sigmoid = 1.0 / (1.0 + np.exp(-gate_z))
+            self._gate_on_rate = float((gate_sigmoid > 0.5).mean())
+            print(f"  q75_tail gate-on rate: {100 * self._gate_on_rate:.1f}%")
+            if self._gate_on_rate < 0.05 or self._gate_on_rate > 0.50:
+                print(
+                    f"  WARNING: q75_tail gate is degenerate "
+                    f"(rate={100 * self._gate_on_rate:.1f}%, healthy 15–35%)"
+                )
 
         self._fitted = True
         return self
@@ -388,6 +458,8 @@ class StackingEnsembleV2(PriceModel):
                 "feature_names": self._feature_names,
                 "base_importances": self._base_importances,
                 "fitted": self._fitted,
+                "include_quantile_bases": self._include_quantile_bases,
+                "gate_on_rate": self._gate_on_rate,
             },
             path,
         )
@@ -410,6 +482,7 @@ class StackingEnsembleV2(PriceModel):
             meta_alpha=data["meta_alpha"],
             include_neural=False,  # Configs already loaded, don't re-add neural
             anchor_feature=data.get("anchor_feature"),
+            include_quantile_bases=data.get("include_quantile_bases", True),
         )
         model._base_models = data["base_models"]
         model._meta_model = data["meta_model"]
@@ -417,6 +490,7 @@ class StackingEnsembleV2(PriceModel):
         model._feature_names = data["feature_names"]
         model._base_importances = data["base_importances"]
         model._fitted = data["fitted"]
+        model._gate_on_rate = data.get("gate_on_rate")
 
         return model
 
@@ -463,12 +537,23 @@ class StackingEnsembleV2(PriceModel):
 
         return folds
 
+    # Q4 gate constants — see plan math spec § C.
+    # Threshold log1p($310) ≈ 5.74 corresponds to v36 Q4 boundary; scale=0.3 in
+    # log-target space ≈ ±35% multiplicative tolerance.
+    _Q4_LOG_THRESHOLD: float = float(np.log1p(310.0))
+    _GATE_SCALE: float = 0.3
+
     def _build_meta_features(
         self,
         base_preds: npt.NDArray[Any],
         X: pd.DataFrame,
     ) -> npt.NDArray[Any]:
         """Build meta-feature matrix from base predictions and optional anchor.
+
+        Adds a sigmoid-gated q75_tail meta-feature when both lgb_huber and
+        quantile_75 base learners are present. The sigmoid replaces a hard
+        Q4 step gate so OOF noise near the threshold doesn't cause 0→q75
+        prediction flips between fit and predict.
 
         Args:
             base_preds: Array of shape (n_samples, n_base_models)
@@ -477,9 +562,27 @@ class StackingEnsembleV2(PriceModel):
         Returns:
             Meta-feature array
         """
+        extras: list[npt.NDArray[Any]] = []
+
+        huber_idx = next(
+            (i for i, c in enumerate(self._base_configs) if c["name"] == "lgb_huber"),
+            None,
+        )
+        q75_idx = next(
+            (i for i, c in enumerate(self._base_configs) if c["name"] == "quantile_75"),
+            None,
+        )
+        if huber_idx is not None and q75_idx is not None:
+            z = (base_preds[:, huber_idx] - self._Q4_LOG_THRESHOLD) / self._GATE_SCALE
+            gate = 1.0 / (1.0 + np.exp(-z))
+            q75_tail = (base_preds[:, q75_idx] * gate).reshape(-1, 1)
+            extras.append(q75_tail)
+
         if self._anchor_feature and self._anchor_feature in X.columns:
-            anchor = X[self._anchor_feature].values.reshape(-1, 1)
-            return np.hstack([base_preds, anchor])
+            extras.append(X[self._anchor_feature].values.reshape(-1, 1))
+
+        if extras:
+            return np.hstack([base_preds, *extras])
         return base_preds
 
     @staticmethod

@@ -576,14 +576,14 @@ class TestFeaturePipeline:
         # Momentum (no snapshot)
         pipeline_with_momentum = FeaturePipeline(include_momentum=True, include_snapshot=False)
 
-        # No extras baseline (no snapshot, no momentum); +6 from WithinEventDynamicsFeatureExtractor
-        assert len(pipeline_no_extras.feature_names) == 96
+        # No extras baseline (no snapshot, no momentum); +8 from ListingStructuralFeatureExtractor (v38)
+        assert len(pipeline_no_extras.feature_names) == 104
 
         # With snapshot (default): baseline + 4 snapshot features
-        assert len(pipeline_with_snapshot.feature_names) == 100
+        assert len(pipeline_with_snapshot.feature_names) == 108
 
         # With momentum (no snapshot): baseline + 4 momentum features
-        assert len(pipeline_with_momentum.feature_names) == 100
+        assert len(pipeline_with_momentum.feature_names) == 108
 
     def test_feature_count_without_new_extractors(self):
         """Test feature count when optional extractors are disabled."""
@@ -593,7 +593,7 @@ class TestFeaturePipeline:
             include_popularity=False,
             include_regional=False,
         )
-        assert len(pipeline.feature_names) == 82
+        assert len(pipeline.feature_names) == 90
 
 
 class TestEventPricingLOO:

@@ -143,3 +143,24 @@ class TrainingMetrics(BaseModel):
         default_factory=dict, description="MAE per price quartile (Q1-Q4)"
     )
     zone_mae: dict[str, float] = Field(default_factory=dict, description="MAE per seat zone")
+
+    # Seen/unseen event breakdown (optional — populated by evaluate_with_breakdown).
+    # primary_mae is the production metric: MAE on the in-scope (seen-event) test slice.
+    # q4_top_decile_mae is diagnostic only — note this differs from quartile_mae.Q4
+    # (top quartile via compute_metrics) and is defined as MAE where y >= 0.9*p95(y).
+    primary_mae: float | None = Field(
+        None, description="Headline metric: MAE on seen-event slice of test set"
+    )
+    seen_mae: float | None = Field(None, description="Alias of primary_mae")
+    unseen_mae: float | None = Field(None, description="MAE on unseen-event slice (diagnostic)")
+    q4_top_decile_mae: float | None = Field(
+        None, description="MAE where y_test >= 0.9*p95(y_test) (top decile by price; diagnostic)"
+    )
+    unseen_event_pct_by_event: float | None = Field(
+        None, description="Fraction of distinct test event_ids not in train_events"
+    )
+
+    # Stacking diagnostic (optional — populated by stacking_v2 q75_tail meta-feature)
+    gate_on_rate: float | None = Field(
+        None, description="Fraction of training rows where huber_pred >= log1p($310) (Q4 gate)"
+    )

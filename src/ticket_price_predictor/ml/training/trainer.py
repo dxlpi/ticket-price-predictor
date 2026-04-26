@@ -19,7 +19,10 @@ from ticket_price_predictor.ml.models.residual import HierarchicalResidualModel,
 from ticket_price_predictor.ml.models.stacking import StackingEnsemble
 from ticket_price_predictor.ml.models.xgboost_model import XGBoostModel
 from ticket_price_predictor.ml.schemas import TrainingMetrics
-from ticket_price_predictor.ml.training.evaluator import ModelEvaluator
+from ticket_price_predictor.ml.training.evaluator import (
+    ModelEvaluator,
+    evaluate_with_breakdown,
+)
 from ticket_price_predictor.ml.training.splitter import DataSplit, TimeBasedSplitter
 from ticket_price_predictor.ml.training.target_transforms import (
     EventBaseResolverImpl,
@@ -263,12 +266,19 @@ class ModelTrainer:
         """Return training metrics."""
         return self._metrics
 
-    def _create_model(self, params: dict[str, Any] | None = None) -> PriceModel:
+    def _create_model(
+        self,
+        params: dict[str, Any] | None = None,
+        model_kwargs: dict[str, Any] | None = None,
+    ) -> PriceModel:
         """Create model instance based on type.
 
         Args:
             params: Optional hyperparameters for the model
+            model_kwargs: Optional constructor kwargs for the model wrapper
+                (e.g. include_quantile_bases for stacking_v2). Default {}.
         """
+        mk = model_kwargs or {}
         if self._model_type == "baseline":
             return BaselineModel()
         elif self._model_type == "lightgbm":
@@ -284,7 +294,7 @@ class ModelTrainer:
         elif self._model_type == "stacking_v2":
             from ticket_price_predictor.ml.models.stacking_v2 import StackingEnsembleV2
 
-            return StackingEnsembleV2()
+            return StackingEnsembleV2(**mk)
         elif self._model_type == "residual":
             return ResidualModel()
         elif self._model_type == "hierarchical":
@@ -293,6 +303,12 @@ class ModelTrainer:
             from ticket_price_predictor.ml.models.neural import TabularNeuralModel
 
             return TabularNeuralModel(params=params)
+        elif self._model_type == "q4_specialist":
+            from ticket_price_predictor.ml.models.q4_specialist import (
+                Q4SpecialistEnsemble,
+            )
+
+            return Q4SpecialistEnsemble(**mk)
         else:
             raise ValueError(f"Unknown model type: {self._model_type}")
 
@@ -310,6 +326,7 @@ class ModelTrainer:
         snapshot_df: pd.DataFrame | None = None,
         outlier_strategy: OutlierStrategy = "global_p95",
         target_transform: str = "log",
+        model_kwargs: dict[str, Any] | None = None,
     ) -> TrainingMetrics:
         """Train model on data.
 
@@ -637,7 +654,7 @@ class ModelTrainer:
         print("Training model...")
         start_time = time.time()
 
-        self._model = self._create_model(params=params)
+        self._model = self._create_model(params=params, model_kwargs=model_kwargs)
 
         # For hierarchical model: inject event_id as a feature column so the
         # model can build event-level aggregates and OOF folds.
@@ -792,6 +809,37 @@ class ModelTrainer:
                 log_target=(target_transform == "log"),
                 target_transform=tt if target_transform not in ("log", "tweedie_raw") else None,
                 zones=test_zones,
+            )
+
+        # Merge seen/unseen breakdown into metrics. Skip RelativeResidualTransform —
+        # its inverse_transform requires df, but evaluate_with_breakdown does not pass it.
+        # v38 uses target_transform="log" so the guard is a no-op for v38.
+        if (
+            not isinstance(tt, RelativeResidualTransform)
+            and "event_id" in test_df.columns
+            and self._train_event_ids
+        ):
+            breakdown = evaluate_with_breakdown(
+                X_test=X_test,
+                y_test=y_test_raw,
+                test_events=test_df["event_id"].astype(str).to_numpy(),
+                train_events=set(self._train_event_ids),
+                model=self._model,
+                target_transform=(tt if target_transform not in ("log", "tweedie_raw") else None),
+                log_target=(target_transform == "log"),
+            )
+            # If model exposes a gate_on_rate diagnostic (StackingEnsembleV2
+            # with q75_tail), persist it.
+            gate_on_rate = getattr(self._model, "_gate_on_rate", None)
+            self._metrics = self._metrics.model_copy(
+                update={
+                    "gate_on_rate": gate_on_rate,
+                    "primary_mae": breakdown["primary_mae"],
+                    "seen_mae": breakdown["seen_mae"],
+                    "unseen_mae": breakdown["unseen_mae"],
+                    "q4_top_decile_mae": breakdown["q4_mae"],
+                    "unseen_event_pct_by_event": breakdown["unseen_event_pct_by_event"],
+                }
             )
 
         ModelEvaluator.print_metrics(self._metrics)

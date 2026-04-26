@@ -42,6 +42,7 @@ class FeaturePipeline:
         include_coldstart: bool = True,
         include_within_event: bool = True,
         include_section_encoding: bool = True,
+        include_listing_structural: bool = True,
         popularity_service: Any | None = None,
         extractor_params: dict[str, dict[str, Any]] | None = None,
     ) -> None:
@@ -111,6 +112,13 @@ class FeaturePipeline:
             )
 
             self._extractors.append(SectionFeatureExtractor())
+
+        if include_listing_structural:
+            from ticket_price_predictor.ml.features.listing_structural import (
+                ListingStructuralFeatureExtractor,
+            )
+
+            self._extractors.append(ListingStructuralFeatureExtractor())
 
         if include_momentum:
             self._extractors.append(MomentumFeatureExtractor())
