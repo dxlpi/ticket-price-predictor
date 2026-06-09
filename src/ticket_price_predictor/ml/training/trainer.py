@@ -1265,6 +1265,10 @@ class ModelTrainer:
             return CatBoostModel.load(model_path)
         elif model_type == "stacking":
             return StackingEnsemble.load(model_path)
+        elif model_type == "stacking_v2":
+            from ticket_price_predictor.ml.models.stacking_v2 import StackingEnsembleV2
+
+            return StackingEnsembleV2.load(model_path)
         elif model_type == "residual":
             return ResidualModel.load(model_path)
         elif model_type == "neural":

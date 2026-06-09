@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
 
@@ -19,6 +20,17 @@ from ticket_price_predictor.ml.training.trainer import ModelTrainer
 from ticket_price_predictor.normalization.seat_zones import SeatZone
 
 _config = get_ml_config()
+
+
+# Representative section name for each seat zone, shared between
+# `PricePredictor.predict_for_zones` and external callers (e.g. the serving layer
+# resolving a UI zone selection to a section string).
+ZONE_REPRESENTATIVE_SECTIONS: dict[SeatZone, str] = {
+    SeatZone.FLOOR_VIP: "Floor VIP",
+    SeatZone.LOWER_TIER: "Lower Level 100",
+    SeatZone.UPPER_TIER: "Upper Level 200",
+    SeatZone.BALCONY: "Balcony 400",
+}
 
 
 class UnknownEventError(ValueError):
@@ -106,6 +118,10 @@ class PricePredictor:
             PricePredictor instance
         """
         model_path = Path(model_path)
+        if model_type == "lightgbm":
+            payload = joblib.load(model_path)
+            if isinstance(payload, dict) and "base_models" in payload and "meta_model" in payload:
+                model_type = "stacking_v2"
         model = ModelTrainer.load(model_path, model_type)  # type: ignore
 
         stem = model_path.stem  # e.g. "lightgbm_v31"
@@ -145,6 +161,11 @@ class PricePredictor:
             known_events=known_events,
             log_transformed_cols=log_transformed_cols,
         )
+
+    @property
+    def known_events(self) -> set[str] | None:
+        """Set of event_ids present in the training corpus, or None when the gate is disabled."""
+        return self._known_events
 
     def predict(
         self,
@@ -204,6 +225,19 @@ class PricePredictor:
 
         # Extract features
         X = self._feature_pipeline.transform(df)
+
+        # Models trained with zero-variance pruning (e.g. v38 stacking) expose
+        # `_feature_names` as the canonical post-prune column list. Restrict X
+        # to that order so LightGBM doesn't see extra columns the base models
+        # weren't trained on.
+        expected_cols = getattr(self._model, "_feature_names", None)
+        if expected_cols:
+            missing = [c for c in expected_cols if c not in X.columns]
+            if missing:
+                raise RuntimeError(
+                    f"feature pipeline missing columns expected by model: {missing[:5]}"
+                )
+            X = X[list(expected_cols)]
 
         # Replicate training-time log-transforms on price-level features.
         # Only applied when _log_transformed_cols is set (model saved with meta file).
@@ -343,16 +377,8 @@ class PricePredictor:
         Raises:
             UnknownEventError: When `event_id` is not in the training corpus.
         """
-        # Representative sections for each zone
-        zone_sections = {
-            SeatZone.FLOOR_VIP: "Floor VIP",
-            SeatZone.LOWER_TIER: "Lower Level 100",
-            SeatZone.UPPER_TIER: "Upper Level 200",
-            SeatZone.BALCONY: "Balcony 400",
-        }
-
         predictions = {}
-        for zone, section in zone_sections.items():
+        for zone, section in ZONE_REPRESENTATIVE_SECTIONS.items():
             pred = self.predict(
                 event_id=event_id,
                 artist_or_team=artist_or_team,

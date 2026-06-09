@@ -51,6 +51,7 @@ htmlcov/
 /data/models/
 /data/optuna/
 /data/.cache/
+/data/ec2-archive/
 
 # Logs
 logs/

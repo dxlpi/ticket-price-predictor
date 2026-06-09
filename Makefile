@@ -1,4 +1,4 @@
-.PHONY: install install-dev lint format typecheck test test-cov clean fetch-sample ingest-events collect-snapshots pipeline
+.PHONY: install install-dev lint format typecheck test test-cov clean fetch-sample ingest-events collect-snapshots pipeline serve
 
 # Install production dependencies
 install:
@@ -62,3 +62,7 @@ collect-snapshots:
 # Run full data pipeline (ingest + collect)
 pipeline:
 	python scripts/run_pipeline.py --days-ahead 90
+
+# Run the prediction web app (requires a trained model)
+serve:
+	MODEL_PATH=$${MODEL_PATH:-data/models/lightgbm_combined-fixed.joblib} python scripts/serve.py

@@ -55,6 +55,19 @@ make typecheck  # mypy
 make test       # pytest
 ```
 
+## Run the web app
+
+1. Install deps: `pip install -e .`
+2. Make sure a trained model exists at `data/models/lightgbm_combined-fixed.joblib` (the directory is gitignored — train one first via `make pipeline` + `python scripts/train_model.py`, or point `MODEL_PATH` at any other `*.joblib` artifact in `data/models/`).
+3. Start the server: `make serve` (override the model path with `MODEL_PATH=path/to/your_model.joblib make serve`).
+4. Open http://127.0.0.1:8000
+
+The web app shows only events present in the loaded model's training corpus, and by
+default only future-dated ones. The search box's free-text query (`q`) is a forgiving
+substring match across artist + venue + city; use the dedicated city input for strict
+city filtering when `q` produces noisy matches. The Tailwind CDN script is intended
+for local prototyping only — do not deploy this UI to a public host as-is.
+
 ## Usage
 
 ### Data Collection

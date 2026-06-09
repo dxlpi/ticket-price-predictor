@@ -1,0 +1,31 @@
+/* SVG venue zone styles */
+.zone {
+  fill: #e5e7eb;
+  cursor: pointer;
+  transition: fill 120ms;
+}
+
+.zone:hover {
+  fill: #93c5fd;
+}
+
+.zone.selected {
+  fill: #2563eb;
+}
+
+.venue-svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Range bar (prediction result) */
+.range-bar {
+  position: relative;
+  overflow: visible;
+}
+
+.range-marker {
+  left: 50%;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px #ffffff;
+}
