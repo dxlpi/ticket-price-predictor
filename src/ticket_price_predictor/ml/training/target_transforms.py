@@ -165,7 +165,8 @@ class BoxCoxTransform(TargetTransform):
         # boxcox1p(x, lmbda) computes ((1+x)^lmbda - 1) / lmbda for lmbda != 0
         # For our case, we use the standard Box-Cox: (y^lmbda - 1) / lmbda
         if abs(self._lambda) < 1e-10:
-            return np.log(y_arr)  # type: ignore[no-any-return]
+            result: npt.NDArray[Any] = np.log(y_arr)
+            return result
         return (np.power(y_arr, self._lambda) - 1.0) / self._lambda
 
     def inverse_transform(
@@ -460,7 +461,8 @@ class RelativeResidualTransform(TargetTransform):
             [self._resolver.resolve_inference(row) for _, row in df.iterrows()],
             dtype=np.float64,
         )
-        return np.expm1(np.asarray(y, dtype=np.float64) + b)  # type: ignore[no-any-return]
+        result: npt.NDArray[Any] = np.expm1(np.asarray(y, dtype=np.float64) + b)
+        return result
 
     @property
     def name(self) -> str:
