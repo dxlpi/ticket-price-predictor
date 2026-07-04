@@ -3,5 +3,52 @@
     "additionalDirectories": [
       "/Users/heather/.ssh"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/incident-guard.sh\"",
+            "timeout": 15,
+            "statusMessage": "Checking incident deny-list..."
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-gate.sh\"",
+            "if": "Bash(git commit:*)",
+            "timeout": 240,
+            "statusMessage": "Pre-commit gate: lint + typecheck + test..."
+          },
+          {
+            "type": "agent",
+            "if": "Bash(git push:*)",
+            "model": "claude-sonnet-5",
+            "timeout": 240,
+            "statusMessage": "Independent PR review before push...",
+            "prompt": "You are an INDEPENDENT senior reviewer. You did NOT write this code and have no attachment to it — your job is to catch what the author's bias would miss, so review skeptically.\n\nDetermine the changes about to be pushed and review them:\n  git rev-parse --abbrev-ref HEAD\n  git log --oneline @{u}..HEAD 2>/dev/null || git log --oneline origin/main..HEAD\n  git diff @{u}..HEAD 2>/dev/null || git diff origin/main...HEAD\n\nJudge against this project's non-negotiables (see CLAUDE.md, .claude/rules/):\n  1. Data leakage — feature pipeline MUST be fit on the training split only; split_raw() before pipeline.fit(). Any fit on val/test is a BLOCK.\n  2. Layer invariant — nothing in ml/ may be imported by schemas/, storage/, scrapers/, normalization/, preprocessing/.\n  3. Secrets — no hard-coded API keys, tokens, or private keys.\n  4. Tests — every changed source module under src/ has a corresponding test.\n  5. Schema sync — Pydantic model changes have matching parquet_schema() updates.\n  6. Correctness — obvious bugs, unguarded edge cases, silent data loss.\n\nInput (hook JSON): $ARGUMENTS\n\nReturn a verdict. APPROVE only if you found no critical issue. If ANY critical (leakage, secret, broken invariant, data-loss bug) is present, BLOCK and list each finding as file:line + one-line why + the fix. Be specific and terse; do not rubber-stamp."
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/incident-guard.sh\"",
+            "timeout": 15,
+            "statusMessage": "Checking incident deny-list..."
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/test-first-guard.sh\"",
+            "timeout": 15,
+            "statusMessage": "Test-first guard: checking for matching test..."
+          }
+        ]
+      }
+    ]
   }
 }

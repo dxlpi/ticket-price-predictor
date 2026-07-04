@@ -1,0 +1,74 @@
+[
+  {
+    "id": "INC-001",
+    "scope": "bash",
+    "pattern": "git[[:space:]]+push[[:space:]].*(--force|--force-with-lease|(^|[[:space:]])-f([[:space:]]|$))",
+    "message": "Force-push detected. Rewriting shared history has erased teammates' commits before — never force-push a shared branch."
+  },
+  {
+    "id": "INC-002",
+    "scope": "bash",
+    "pattern": "git[[:space:]]+commit[[:space:]].*--no-verify",
+    "message": "--no-verify bypasses the pre-commit quality gate. Skipping lint/test once shipped a broken build to main."
+  },
+  {
+    "id": "INC-003",
+    "scope": "bash",
+    "pattern": "rm[[:space:]].*-[a-z]*r[a-z]*[[:space:]].*(data|models|artifacts|\\.parquet|\\.pkl|\\.env)",
+    "message": "Recursive rm against data/models/secrets. A stray rm -rf wiped the parquet store once and recovery took a full day."
+  },
+  {
+    "id": "INC-004",
+    "scope": "bash",
+    "pattern": "git[[:space:]]+(reset[[:space:]]+--hard|clean[[:space:]]+-[a-z]*f)",
+    "message": "Hard reset / forced clean discards uncommitted work irreversibly. Stash or branch instead."
+  },
+  {
+    "id": "INC-005",
+    "scope": "bash",
+    "pattern": "(DROP[[:space:]]+TABLE|TRUNCATE[[:space:]]+TABLE|DELETE[[:space:]]+FROM[[:space:]]+[a-z_]+[[:space:]]*;)",
+    "message": "Unqualified destructive SQL. A DELETE FROM without a WHERE emptied a table in production."
+  },
+  {
+    "id": "INC-006",
+    "scope": "bash",
+    "pattern": "(^pip[0-9]*[[:space:]]+install|[;&|][[:space:]]*pip[0-9]*[[:space:]]+install)",
+    "message": "Use `uv`, not bare `pip`. Mixing pip into this uv-managed project desynced the lockfile and broke CI."
+  },
+  {
+    "id": "INC-007",
+    "scope": "bash",
+    "pattern": "curl[^|]*\\|[[:space:]]*(sudo[[:space:]]+)?(ba)?sh",
+    "message": "curl | sh executes untrusted remote code. Supply-chain vector — download, inspect, then run."
+  },
+  {
+    "id": "INC-008",
+    "scope": "bash",
+    "pattern": "chmod[[:space:]]+(-R[[:space:]]+)?777",
+    "message": "chmod 777 makes files world-writable. Over-broad permissions exposed a credentials file once."
+  },
+  {
+    "id": "INC-009",
+    "scope": "bash",
+    "pattern": ">[[:space:]]*[^[:space:]]*\\.parquet",
+    "message": "Direct redirect over a .parquet file bypasses the repository layer and corrupts the stored schema. Write through the repository."
+  },
+  {
+    "id": "INC-010",
+    "scope": "content",
+    "pattern": "datetime\\.utcnow[(]",
+    "message": "datetime.utcnow() is timezone-naive. Project rule: use datetime.now(UTC). Naive timestamps caused an off-by-hours snapshot bug."
+  },
+  {
+    "id": "INC-011",
+    "scope": "content",
+    "pattern": "(AKIA[0-9A-Z]{16}|aws_secret_access_key[[:space:]]*=|-----BEGIN[[:space:]][A-Z]*[[:space:]]*PRIVATE[[:space:]]KEY-----)",
+    "message": "Hard-coded credential / private key detected. Committed secrets have leaked before — load from .env / environment."
+  },
+  {
+    "id": "INC-012",
+    "scope": "content",
+    "pattern": "pipeline\\.fit.*(test|val)",
+    "message": "Feature pipeline fitted on test/val data = data leakage — the cardinal ML risk here (docs/issues/001). Fit on the training split only."
+  }
+]
