@@ -64,6 +64,12 @@ RE_URL = re.compile(r"https?://\S+")
 # Obvious non-references — example placeholders, not real paths.
 PLACEHOLDER = ("your_", "path/to", "<", ">", "example", "...")
 
+# Runtime artifact trees that are intentionally gitignored (trained model
+# binaries, collected datasets). Docs legitimately reference *where* these are
+# written, but they do not exist in a fresh checkout — validating them would
+# make CI depend on local, uncommitted state. Skip references into these trees.
+ARTIFACT_PREFIXES = ("data/models/", "data/snapshots/")
+
 
 def iter_context_files() -> list[Path]:
     seen: set[Path] = set()
@@ -81,8 +87,11 @@ def candidate_refs(text: str) -> set[str]:
     out: set[str] = set()
     for r in refs:
         r = r.strip().rstrip(".,;:)")
-        if r and not any(tok in r for tok in PLACEHOLDER):
-            out.add(r)
+        if not r or any(tok in r for tok in PLACEHOLDER):
+            continue
+        if r.lstrip("./").startswith(ARTIFACT_PREFIXES):
+            continue  # gitignored runtime artifact — not expected in a checkout
+        out.add(r)
     return out
 
 

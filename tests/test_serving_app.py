@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from fastapi.routing import APIRoute
 from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
 
@@ -22,7 +21,12 @@ from ticket_price_predictor.serving.app import create_app
 
 
 def _api_route_paths(app: FastAPI) -> set[str]:
-    return {r.path for r in app.routes if isinstance(r, APIRoute)}
+    # Assert against the OpenAPI schema (stable public API) rather than walking
+    # `app.routes`: newer FastAPI (>=0.138) represents an included router as a
+    # single internal `_IncludedRouter` node instead of flattening child
+    # `APIRoute`s into `app.routes`, so isinstance-based introspection is
+    # version-fragile and silently returned an empty set under the CI resolve.
+    return set(app.openapi()["paths"].keys())
 
 
 def _has_static_root_mount(app: FastAPI) -> bool:
