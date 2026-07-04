@@ -4,21 +4,24 @@ ML system for predicting secondary-market ticket prices at the seat-zone level u
 
 ## Overview
 
-The system targets the U.S. market (concerts, sports, theater) and predicts resale ticket prices by combining data from multiple sources with a LightGBM gradient boosting model.
+The system targets the U.S. market (concerts, sports, theater) and predicts resale ticket prices by combining data from multiple sources with a stacking ensemble of gradient-boosted models.
 
-**Current Model Performance**: MAE $94.60 | MAPE 22.4% | R² 0.66
+**Current Model Performance (v38, production)**: primary MAE **$28.88** (seen events) | overall MAE $80.92 | MAPE 41.6% | R² 0.63
+See [`docs/model-card.md`](docs/model-card.md) for the full benchmark table and scope definition.
 
 ## Features
 
 - Event discovery via Ticketmaster Discovery API
-- Real-time price scraping from VividSeats & StubHub (Playwright-based)
+- Real-time price scraping from VividSeats & StubHub (Playwright-based, anti-detection)
 - Artist popularity aggregation from YouTube Music and Last.fm
-- 44 engineered features across 7 domains (artist, event, seating, time-series, momentum, popularity, regional)
-- LightGBM model with quantile regression variant for 95% confidence intervals
-- Leak-free training pipeline with artist-stratified temporal splits
+- 80+ engineered features across 11 domains (artist, event, seating, time-series, popularity, regional, event/zone/section target encoding, venue, interactions, listing structural, snapshot)
+- StackingEnsembleV2 (LightGBM Huber + deeper LightGBM + residual model → Ridge meta-learner) with quantile bases and 95% confidence intervals
+- Companion sale-probability (CVR) model — LightGBM classifier for sell-through ranking
+- Leak-free training pipeline with artist-stratified temporal splits (split-before-fit)
 - Data preprocessing pipeline with cleaning, validation, and transformation
 - Standardized seat zone normalization for cross-venue learning
-- 301 automated tests
+- FastAPI web serving layer for interactive price lookups
+- 860+ automated tests across 49 modules
 
 ## Quick Start
 
@@ -121,14 +124,15 @@ ticket-price-predictor/
 │   ├── preprocessing/        # Data cleaning & transformation pipeline
 │   ├── popularity/           # Popularity aggregation (YouTube Music, Last.fm)
 │   ├── synthetic/            # Synthetic data generation
+│   ├── serving/              # FastAPI web serving layer
 │   └── ml/                   # Machine learning pipeline
-│       ├── features/         # 7 feature extractors (44 features)
-│       ├── models/           # Baseline, LightGBM, Quantile LightGBM
+│       ├── features/         # Feature extractors (11 domains, 80+ features)
+│       ├── models/           # Baseline, LightGBM, quantile, stacking ensemble, CVR
 │       ├── training/         # Split-first training pipeline
 │       ├── tuning/           # Optuna hyperparameter optimization
 │       └── inference/        # Prediction service
 ├── scripts/                  # CLI entry points
-├── tests/                    # 301 automated tests
+├── tests/                    # 860+ automated tests
 └── data/
     ├── raw/                  # Raw data (events, listings, snapshots)
     └── models/               # Trained model artifacts
@@ -150,27 +154,36 @@ YouTube Music/Last.fm → Artist popularity signals
         LightGBM Model → Price Prediction (with 95% CI)
 ```
 
-## Feature Engineering (44 features)
+## Feature Engineering (80+ features across 11 domains)
 
-| Domain | Features | Description |
-|--------|----------|-------------|
-| Artist | 7 | Historical avg/median price, event count, premium ratio |
-| Popularity | 6 | YouTube Music/Last.fm integrated popularity score |
-| Regional | 7 | City/country/global price ratios, market strength |
-| Event | 8 | City tier, day of week, season, venue capacity |
-| Seating | 6 | Zone encoding (floor to balcony), row number, price ratio |
-| Time-series | 6 | Days to event, urgency buckets |
-| Momentum | 4 | 7d/30d price momentum, volatility |
+The strongest signal comes from event/zone/section-level target encoding; all group-level
+statistics use Bayesian smoothing to prevent small-sample memorization.
+
+| Domain | Description |
+|--------|-------------|
+| Event/zone/section pricing | Target-encoded event, zone, and section median prices — dominant features (~76% importance) |
+| Artist | Historical avg/median price, event count, artist×zone and artist×region encoding |
+| Regional | City/country/global price ratios and market strength (Bayesian-smoothed) |
+| Event | City tier, day of week, season, venue capacity, market saturation |
+| Seating | Zone encoding (floor to balcony), row number, price ratio, is_premium |
+| Time-series | Days to event, urgency buckets |
+| Popularity | YouTube Music / Last.fm integrated popularity score + availability flag |
+| Venue | Venue avg/median/std price (Bayesian-smoothed), is_known |
+| Interactions | Artist×zone, urgency×zone, artist×venue cross-domain terms |
+| Listing structural | Structural signals parsed from section/listing names |
+| Snapshot | Inventory change rate, zone price trend, listing count (temporal) |
 
 ## Training Pipeline
 
-The training pipeline prevents data leakage by splitting before feature extraction:
+The training pipeline prevents data leakage by splitting before feature extraction (split-before-fit):
 
-1. Cap price outliers at 99th percentile
-2. Split raw data temporally with artist stratification
-3. Fit feature pipeline on training data only
-4. Transform train/val/test independently
-5. Train LightGBM with early stopping (patience=100)
+1. Filter invalid prices (<$10) and cap outliers at the 95th percentile
+2. Normalize artist aliases and city names for consistent grouping
+3. Split raw data temporally with artist stratification (`split_raw()`)
+4. Fit the feature pipeline on training data only (Bayesian-smoothed group stats)
+5. Transform train/val/test independently; remove zero-variance features
+6. Log-transform the target (`np.log1p`) and price-based features
+7. Train the stacking ensemble (LightGBM GBDT + Huber loss, early stopping patience=100) with temporally-sorted OOF folds for the meta-learner
 
 ## Configuration
 
@@ -207,10 +220,10 @@ make check      # All of the above
 
 - [x] **M0**: Foundation (repo structure, API client, schemas)
 - [x] **M1**: Data pipeline (batch ingestion, storage, validation)
-- [x] **M2**: Feature engineering (44 features, 7 domains)
-- [x] **M3**: Model training (LightGBM, quantile regression, leak-free pipeline)
-- [ ] **M4**: Backtesting & validation
-- [ ] **M5**: Deployment
+- [x] **M2**: Feature engineering (80+ features, 11 domains)
+- [x] **M3**: Model training (stacking ensemble, quantile regression, leak-free pipeline)
+- [x] **M4**: Sale-probability (CVR) model + FastAPI web serving layer
+- [ ] **M5**: Backtesting & production deployment
 
 ## License
 

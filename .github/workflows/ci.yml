@@ -7,6 +7,26 @@ on:
     branches: [main]
 
 jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate documentation paths
+        # Fails the build if any CLAUDE.md / AGENTS.md / docs reference points at
+        # a file that no longer exists, blocking stale "hallucinated" paths at merge.
+        run: python scripts/check_doc_paths.py
+
+      - name: Run agent-readiness evals
+        # Acceptance-task pass-rate for agent-facing contracts (doc integrity, the
+        # ml/ layer invariant, decision-log indexing). Fails below threshold.
+        run: python evals/run_evals.py
+
   lint:
     runs-on: ubuntu-latest
     steps:

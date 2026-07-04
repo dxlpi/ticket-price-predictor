@@ -72,6 +72,36 @@ ML system for predicting secondary-market (resale) ticket prices at the seat-zon
    |  inference/   (PricePredictor + cold-start fallback)    |
    +--------------------------------------------------------+
 
+### Layer Dependency Graph
+
+```mermaid
+flowchart TD
+    subgraph external[External Services]
+        TM[Ticketmaster API]
+        YT[YouTube Music]
+        LF[Last.fm API]
+    end
+    TM --> API[api/]
+    YT --> POP[popularity/]
+    LF --> POP
+    API --> SCH[schemas/]
+    POP --> SCH
+    SCH --> SCR[scrapers/]
+    SCR --> ING[ingestion/]
+    ING --> STO[storage/]
+    STO --> NRM[normalization/]
+    STO --> PRE[preprocessing/]
+    NRM --> VAL[validation/]
+    PRE --> ML[ml/ · features · models · training · inference]
+    VAL --> ML
+
+    classDef guard fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+    class ML guard;
+```
+
+> **Invariant:** imports flow downward only. Nothing in `ml/` may be imported by any
+> layer above it (enforced by the rules below and the `leakage-guardian` review agent).
+
 ## Dependency Rules
 
 Code flows top-to-bottom. Each layer may only depend on layers above it:

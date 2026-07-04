@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-07-04T07:51:16Z",
+  "total": 6,
+  "passed": 6,
+  "pass_rate": 1.0,
+  "threshold": 1.0,
+  "tasks": [
+    {
+      "id": "doc_paths_resolve",
+      "category": "verification",
+      "description": "Every path referenced in context/docs resolves (no hallucinated paths).",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "layer_invariant_ml_isolation",
+      "category": "architecture",
+      "description": "No layer below ml/ imports from ticket_price_predictor.ml (split-before-fit invariant).",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "preprocessing_module_compiles",
+      "category": "build",
+      "description": "Core preprocessing source compiles without syntax errors.",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "issue_log_fully_indexed",
+      "category": "documentation",
+      "description": "docs/issues/README.md indexes every numbered issue entry.",
+      "passed": true,
+      "detail": "missing: []"
+    },
+    {
+      "id": "memory_index_points_to_stores",
+      "category": "documentation",
+      "description": "Root MEMORY.md links the decision store (docs/issues).",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": "architecture_has_mermaid",
+      "category": "documentation",
+      "description": "A visual dependency/data-flow diagram (mermaid) exists in the agent-facing docs.",
+      "passed": true,
+      "detail": ""
+    }
+  ]
+}

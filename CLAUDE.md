@@ -74,19 +74,23 @@ make test    # pytest only
 
 ## Data Flow
 
+```mermaid
+flowchart TD
+    TM[Ticketmaster API] --> EV[EventMetadata → events.parquet]
+    SC[VividSeats / StubHub scrapers] --> LI[TicketListing → listings.parquet]
+    POP[YouTube Music / Last.fm] --> PS[PopularityService features]
+    EV --> PRE[Preprocessing Pipeline]
+    LI --> PRE
+    PS --> PRE
+    PRE --> SPLIT[Split raw data<br/>artist-stratified · temporal]
+    SPLIT --> FP[Feature Pipeline<br/>fit on train only]
+    FP --> M[LightGBM Model]
+    M --> PP[PricePrediction · 95% CI]
 ```
-Ticketmaster API → EventMetadata → events.parquet (event discovery)
-VividSeats/StubHub scrapers → TicketListing → listings.parquet (actual prices)
-YouTube Music/Last.fm → PopularityService → popularity features
-                          ↓
-              Preprocessing Pipeline
-                          ↓
-              Split raw data (artist-stratified, temporal)
-                          ↓
-              Feature Pipeline (fit on train only)
-                          ↓
-              LightGBM Model → PricePrediction (with 95% CI)
-```
+
+The dashed **split-before-fit** boundary is the leakage guard: everything downstream of
+`Split raw data` is fitted on the training split only. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full layer-dependency graph.
 
 ## Training Pipeline
 
@@ -104,6 +108,14 @@ The training pipeline prevents data leakage by:
 ## Issue Tracking
 
 When you encounter a major issue during any task (bugs with non-obvious root causes, feature engineering experiments that failed or succeeded unexpectedly, data quality problems, performance regressions, or architectural decisions with significant trade-offs), document it in `docs/issues/`. Use the next available number following the format `NNN-short-description.md` with sections: Problem, Impact, Root Cause, Solution, Outcome. Mark status as Open or Resolved and severity as Critical/High/Medium.
+
+## Agent Evaluation
+
+Agent-readiness is measured, not assumed. [`evals/`](evals/README.md) runs a suite of
+acceptance tasks (doc-path integrity, the `ml/` layer invariant, decision-log indexing,
+module compilation) and records a pass-rate to `evals/agent-results.json` — an agent-run log
+and baseline for telemetry. Run `make evals` (or `python evals/run_evals.py`) after any
+agent-driven change; a drop below threshold fails the run so regressions surface early.
 
 ## Environment
 

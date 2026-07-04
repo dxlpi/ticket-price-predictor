@@ -1,0 +1,42 @@
+{
+  "description": "Agent-readiness acceptance tasks. Each task is a verifiable check a coding agent's change must keep green; pass-rate is the headline metric. Commands are argv arrays run from the repo root with no shell.",
+  "threshold": 1.0,
+  "tasks": [
+    {
+      "id": "doc_paths_resolve",
+      "category": "verification",
+      "description": "Every path referenced in context/docs resolves (no hallucinated paths).",
+      "command": ["python", "scripts/check_doc_paths.py", "--quiet"]
+    },
+    {
+      "id": "layer_invariant_ml_isolation",
+      "category": "architecture",
+      "description": "No layer below ml/ imports from ticket_price_predictor.ml (split-before-fit invariant).",
+      "command": ["python", "-c", "import pathlib,sys; root=pathlib.Path('src/ticket_price_predictor'); layers=['schemas','storage','scrapers','normalization','preprocessing','validation','api','popularity','ingestion']; bad=[str(f) for L in layers for f in (root/L).rglob('*.py') if 'ticket_price_predictor.ml' in f.read_text()]; print('\\n'.join(bad)); sys.exit(1 if bad else 0)"]
+    },
+    {
+      "id": "preprocessing_module_compiles",
+      "category": "build",
+      "description": "Core preprocessing source compiles without syntax errors.",
+      "command": ["python", "-m", "py_compile", "src/ticket_price_predictor/preprocessing/base.py", "src/ticket_price_predictor/preprocessing/pipeline.py"]
+    },
+    {
+      "id": "issue_log_fully_indexed",
+      "category": "documentation",
+      "description": "docs/issues/README.md indexes every numbered issue entry.",
+      "command": ["python", "-c", "import pathlib,sys; p=pathlib.Path('docs/issues'); idx=p/'README.md'; ids=[f.name for f in p.glob('[0-9]*.md')]; txt=idx.read_text() if idx.exists() else ''; missing=[i for i in ids if i not in txt]; print('missing:', missing); sys.exit(1 if (not idx.exists() or missing) else 0)"]
+    },
+    {
+      "id": "memory_index_points_to_stores",
+      "category": "documentation",
+      "description": "Root MEMORY.md links the decision store (docs/issues).",
+      "command": ["python", "-c", "import pathlib,sys; t=pathlib.Path('MEMORY.md').read_text(); sys.exit(0 if 'docs/issues' in t else 1)"]
+    },
+    {
+      "id": "architecture_has_mermaid",
+      "category": "documentation",
+      "description": "A visual dependency/data-flow diagram (mermaid) exists in the agent-facing docs.",
+      "command": ["python", "-c", "import pathlib,sys; t=pathlib.Path('CLAUDE.md').read_text()+pathlib.Path('docs/ARCHITECTURE.md').read_text(); sys.exit(0 if '```mermaid' in t else 1)"]
+    }
+  ]
+}

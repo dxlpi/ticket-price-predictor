@@ -1,4 +1,4 @@
-.PHONY: install install-dev lint format typecheck test test-cov clean fetch-sample ingest-events collect-snapshots pipeline serve
+.PHONY: install install-dev lint format typecheck test test-cov check-docs evals clean fetch-sample ingest-events collect-snapshots pipeline serve
 
 # Install production dependencies
 install:
@@ -31,6 +31,14 @@ test:
 test-cov:
 	pytest --cov=src/ticket_price_predictor --cov-report=html
 	@echo "Coverage report generated in htmlcov/"
+
+# Validate that doc/context file path references resolve (no stale references)
+check-docs:
+	python scripts/check_doc_paths.py
+
+# Run the agent-readiness eval suite (writes evals/agent-results.json)
+evals:
+	python evals/run_evals.py
 
 # Run all checks (lint, typecheck, test)
 check: lint typecheck test
